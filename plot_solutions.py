@@ -3,11 +3,14 @@ from collections import Counter
 import networkx as nx
 import itertools
 import numpy as np
+import math
 
 def format_qaoa_samples(samples):
     bitstring_counts = {}
     for sample in samples:
         bitstring = ''.join(str(int(v)) for v in sample.x)
+        # bitstring = bitstring[::-1]
+
         if bitstring in bitstring_counts:
             bitstring_counts[bitstring] += 1
         else:
@@ -32,21 +35,31 @@ def interpret_solution(bitstring, adj_matrix, N, Delta):
         mst_edges: List of edges in the MST with weights, or None if invalid.
         z_values: List of decoded z_v for each node v.
     """
+
+    # print(bitstring)
+
     # Initialize MST structures
     mst_edges = []
     mst_graph = nx.Graph()
     mst_graph.add_nodes_from(range(N))  # Add all nodes (0 to N-1)
     added_edges = set()
+    root = 0  # Assume node 0 is the root
 
     qubit_index = {}
     idx = 0
     # Step 1: Build qubit_index mapping for all variables
     # e_{u,v} and e_{v,u}
     for u in range(N):
-        for v in range(N):
-            if u != v and adj_matrix[u, v] > 0 and v != 0:
-                qubit_index[('e', u, v)] = idx
-                idx += 1
+        for v in range(u+1, N):
+            if adj_matrix[u, v] > 0:
+                if u == root:
+                    qubit_index[('e', u, v)] = idx
+                    idx += 1
+                else:
+                    qubit_index[('e', u, v)] = idx
+                    idx += 1    
+                    qubit_index[('e', v, u)] = idx
+                    idx += 1                                     
 
     # x_{u,v} (ordering variables)
     for u in range(1, N):
@@ -55,7 +68,7 @@ def interpret_solution(bitstring, adj_matrix, N, Delta):
             idx += 1
     
     # z_v (binary-encoded degree variables)
-    binary_degree_size = int(np.ceil(np.log2(Delta + 1)))
+    binary_degree_size = int(math.ceil(np.log2(Delta + 1)))
     for v in range(N):
         for i in range(binary_degree_size):
             qubit_index[('z', v, i)] = idx
@@ -66,28 +79,29 @@ def interpret_solution(bitstring, adj_matrix, N, Delta):
     k = binary_degree_size - 1  # if the total #bits = k+1
     for v in range(N):
         z_v = 0
-        # sum_{i=0 to k-1} 2^i * z_{v,i}
+        # sum_{i=0 to k-1} 2^i * z_{v,i} 
         # + (Delta+1 - 2^k) * z_{v,k}
 
         for i in range(k):  # 0..k-1
-            bit_val = bitstring[ qubit_index[('z', v, i)] ]
+            bit_val = int(bitstring[ qubit_index[('z', v, i)] ])
             z_v += (2**i)*bit_val
 
         # last bit (i = k)
-        last_bit_val = bitstring[ qubit_index[('z', v, k)] ]
+        last_bit_val = int(bitstring[ qubit_index[('z', v, k)] ])
         z_v += (Delta + 1 - 2**k)*last_bit_val
 
         z_values[v] = z_v
 
+    # print(qubit_index)
+
     # 2. Reconstruct edges based on e_{u,v} and x_{u,v}
-    root = 0  # Assume node 0 is the root
 
     for u, v in itertools.combinations(range(N), 2):
         if adj_matrix[u, v] > 0 and v!=0 :
             # Case 1: Root edges (only consider e_{0, v})
             if u == root:
                 e_uv = bitstring[qubit_index[('e', u, v)]]  # Edge 0->v
-                if e_uv == 1 and (u, v) not in added_edges:
+                if e_uv == '1' and (u, v) not in added_edges:
                     weight = adj_matrix[u, v]
                     mst_edges.append((u, v, weight))
                     mst_graph.add_edge(u, v, weight=weight)
@@ -100,7 +114,7 @@ def interpret_solution(bitstring, adj_matrix, N, Delta):
             try:
                 x_uv = bitstring[qubit_index[('x', u, v)]]  # Order: u->v
             except:
-                x_uv = 0
+                x_uv = '0'
 
             # If e_uv == 1 and x_uv == 1, that means the chosen edge is u->v
             # and if e_vu == 1 and x_uv == 0, that means the chosen edge is v->u
@@ -108,8 +122,8 @@ def interpret_solution(bitstring, adj_matrix, N, Delta):
             
             # Simplified check: if exactly one direction is chosen
             # and the ordering is consistent with that direction.
-            if ((e_uv == 1 and x_uv == 1) or
-                (e_vu == 1 and x_uv == 1)) and (e_uv != e_vu) and ((u, v) not in added_edges):
+            if ((e_uv == '1' and x_uv == '1') or
+                (e_vu == '1' and x_uv == '1')) and (e_uv != e_vu) and ((u, v) not in added_edges):
                 weight = adj_matrix[u, v]
                 mst_edges.append((u, v, weight))
                 mst_graph.add_edge(u, v, weight=weight)
@@ -151,8 +165,9 @@ def sample_and_plot_histogram(samples, adj_matrix, N, Delta, interpret_solution_
     """
     # Step 1: Interpret and validate solutions
     valid_solutions = []
-    for bitstring, frequency in samples.items():
-        bit_array = [int(bit) for bit in bitstring]
+    for bitstring in samples:
+        bit_array = "".join([str(int(_)) for _ in bitstring.x])
+        # bit_array = bit_array[::-1] 
         mst_solution = interpret_solution_fn(bit_array, adj_matrix, N, Delta)
         if mst_solution is not None:
             valid_solutions.append(tuple(sorted(mst_solution)))  # Normalize for comparison

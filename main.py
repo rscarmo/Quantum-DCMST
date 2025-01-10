@@ -1,6 +1,7 @@
 from graph import Graph
-from qubo_problem import QUBOProblem
+from qubo_problem import DCMST_QUBO
 from plot_solutions import draw_solution, sample_and_plot_histogram, interpret_solution
+from qiskit_algorithms.optimizers import COBYLA
 from config import Config
 import numpy as np
 
@@ -34,12 +35,36 @@ def main():
     if dcmst_edges is not None:
         graph.plot_mst(dcmst_edges, mst_color='red', title=f"DC-MST (max_degree={max_degree})")
 
+    # Create degree_constraints dictionary with the same max degree for all nodes
+    degree_constraints = {node: max_degree for node in graph.G.nodes()}
+
     # Configure and solve the QUBO problem
-    qubo_problem = QUBOProblem(graph.G, config)
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config)
     qubo_problem.configure_variables()
     qubo_problem.define_objective_function()
     qubo_problem.add_constraints()
-    samples = qubo_problem.solve_problem()
+
+    # Print the number of qubits necessary to solve the problem
+    qubo_problem.print_number_of_qubits()
+
+    optimizer = COBYLA()
+    p = 1  # QAOA circuit depth
+
+    samples = qubo_problem.solve_problem(optimizer, p)
+
+    def format_qaoa_samples(samples, max_len: int = 10):
+        qaoa_res = []
+        for s in samples:
+            bitstring = ''.join(str(int(v)) for v in s.x)
+            # bitstring = bitstring[::-1]            
+            qaoa_res.append((bitstring, s.fval, s.probability))
+
+        res = sorted(qaoa_res, key=lambda x: -x[2])[0:max_len]
+
+        return [(_[0] + f": value: {_[1]:.3f}, probability: {1e2*_[2]:.1f}%") for _ in res]
+
+
+    print(format_qaoa_samples(samples))   
 
     solution = qubo_problem.solution
 
@@ -56,9 +81,6 @@ def main():
 
     # Draw the most sampled
     draw_solution(graph, solution)
-    
-    import networkx as nx
-    import matplotlib.pyplot as plt
 
 
 if __name__ == "__main__":

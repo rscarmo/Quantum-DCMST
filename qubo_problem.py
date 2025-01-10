@@ -3,15 +3,19 @@ from qiskit_optimization.converters import QuadraticProgramToQubo
 from qiskit_ibm_runtime import QiskitRuntimeService
 from qiskit_optimization.algorithms import MinimumEigenOptimizer
 from qiskit_algorithms import QAOA
-from qiskit_algorithms.optimizers import COBYLA
 from qiskit.primitives import Sampler
 from qiskit.primitives import BackendSampler
 from qiskit_aer import AerSimulator
 import time
 import networkx as nx
+import numpy as np
+import math
+
+# import matplotlib
+# matplotlib.use('Agg')
 
 class DCMST_QUBO:
-    def __init__(self, G, degree_constraints, root=0):
+    def __init__(self, G, degree_constraints, config, root=0):
         """
         Initialize the QUBO for the Degree-Constrained Minimum Spanning Tree problem.
 
@@ -25,6 +29,12 @@ class DCMST_QUBO:
         self.n = G.number_of_nodes()
         self.degree_constraints = degree_constraints
         self.root = root
+        self.config = config
+        # Define the penalty coefficient
+        num_vertices = self.n
+        m = max(data['weight'] for _, _, data in self.G.edges(data=True))
+        self.P_I = (num_vertices - 1) * m + 1        
+        print('P_I', self.P_I)
 
     def configure_variables(self):
         """Define variables for edge inclusion (e_{u,v}), order (x_{u,v}), and degree counters (z_{v,i})."""
@@ -49,81 +59,202 @@ class DCMST_QUBO:
                 self.qubo.binary_var(name=var_name_x)
 
         # Degree counter variables z_{v,i}
+        max_degree = self.degree_constraints.get(v, self.n - 1)        
+        binary_bits = int(np.ceil(np.log2(max_degree+1)))
         for v in self.G.nodes():
-            max_degree = self.degree_constraints.get(v, self.n - 1)
-            num_degree_vars = max_degree.bit_length()
-            for i in range(num_degree_vars):
+            for i in range(binary_bits):
                 var_name_z = f'z_{v}_{i}'
                 self.qubo.binary_var(name=var_name_z)
 
     def define_objective_function(self):
         """Minimize the total weight of selected edges."""
-        objective_terms = {
-            f'e_{u}_{v}': w for u, v, w in self.G.edges(data='weight')
-        }
+        objective_terms = {}
+
+        # Root edges: Only consider one direction (v0 -> u)
+        for u in self.G.neighbors(self.root):
+            edge_var = f'e_{self.root}_{u}'
+            weight = self.G[self.root][u]['weight']
+            objective_terms[edge_var] = weight
+
+        # Non-root edges: Include both directions (u -> v and v -> u)
+        for u, v, w in self.G.edges(data='weight'):
+            if u != self.root and v != self.root:
+                edge_var_uv = f'e_{u}_{v}'
+                edge_var_vu = f'e_{v}_{u}'
+                objective_terms[edge_var_uv] = w
+                objective_terms[edge_var_vu] = w
+
+        # Add the linear objective terms
         self.qubo.minimize(linear=objective_terms)
 
-    def add_constraints(self):
-        """Add constraints to enforce the DCMST problem conditions."""
-        # 1. Edge count constraint: sum of selected edges = n - 1
-        edge_count_constraint = {
-            f'e_{u}_{v}': 1 for u, v in self.G.edges()
-        }
-        self.qubo.linear_constraint(
-            linear=edge_count_constraint,
-            sense='==',
-            rhs=self.n - 1,
-            name='edge_count_constraint'
-        )
-
-        # 2. Acyclicity constraints using ordering variables x_{u,v}
+    def add_penalty_terms(self):
+        # 1. Acyclicity via Topological Ordering Penalty Terms
         for u in range(1, self.n):
-            if u == self.root:
-                continue
             for v in range(u + 1, self.n):
-                if v == self.root:
-                    continue
-                # Add acyclicity constraint: x_{u,v} + x_{v,u} <= 1
-                var_name_x_uv = f'x_{u}_{v}'
-                var_name_x_vu = f'x_{v}_{u}'
-                self.qubo.linear_constraint(
-                    linear={var_name_x_uv: 1, var_name_x_vu: 1},
-                    sense='<=',
-                    rhs=1,
-                    name=f'acyclicity_{u}_{v}'
-                )
+                for w in range(v + 1, self.n):
+                    if u == self.root or v == self.root or w == self.root:
+                        continue
 
-        # 3. Edge alignment constraints: ensure consistency between e_{u,v} and x_{u,v}
-        for u, v in self.G.edges():
-            if u != self.root and v != self.root:
+                    # Define variable names
+                    var_name_x_uv = f'x_{u}_{v}'
+                    var_name_x_vw = f'x_{v}_{w}'
+                    var_name_x_uw = f'x_{u}_{w}'
+
+                    # Ensure all required variables exist
+                    variables = [var_name_x_uv, var_name_x_vw, var_name_x_uw]
+                    if not all(var in self.qubo.variables_dict for var in variables):
+                        continue
+
+                    # Initialize linear and quadratic terms
+                    linear_terms = {}
+                    quadratic_terms = {}
+
+                    # Add linear term: +P_I * x_{u,w}
+                    linear_terms[var_name_x_uw] = linear_terms.get(var_name_x_uw, 0) + self.P_I
+
+                    # Add quadratic terms
+                    # +P_I * x_{u,v}x_{v,w}
+                    pair_uv_vw = tuple(sorted([var_name_x_uv, var_name_x_vw]))
+                    quadratic_terms[pair_uv_vw] = quadratic_terms.get(pair_uv_vw, 0) + self.P_I
+
+                    # -P_I * x_{u,v}x_{u,w}
+                    pair_uv_uw = tuple(sorted([var_name_x_uv, var_name_x_uw]))
+                    quadratic_terms[pair_uv_uw] = quadratic_terms.get(pair_uv_uw, 0) + (- self.P_I)
+
+                    # -P_I * x_{u,w}x_{v,w}
+                    pair_uw_vw = tuple(sorted([var_name_x_uw, var_name_x_vw]))
+                    quadratic_terms[pair_uw_vw] = quadratic_terms.get(pair_uw_vw, 0) + (- self.P_I)
+
+                    # Add all terms to the QUBO
+                    for var, coeff in linear_terms.items():
+                        self.qubo.minimize.linear[var] = self.qubo.minimize.linear.get(var, 0) + coeff
+
+                    for pair, coeff in quadratic_terms.items():
+                        self.qubo.minimize.quadratic[pair] = self.qubo.minimize.quadratic.get(pair, 0) + coeff
+
+
+        # 5. Alignment Constraint (Term (ii))
+        for (u, v) in self.G.edges():
+            if u < v and u != self.root and v != self.root:
                 var_name_e_uv = f'e_{u}_{v}'
                 var_name_e_vu = f'e_{v}_{u}'
                 var_name_x_uv = f'x_{u}_{v}'
 
-                # Add alignment constraint: e_{u,v} = x_{u,v}
-                self.qubo.linear_constraint(
-                    linear={var_name_e_uv: 1, var_name_x_uv: -1},
-                    sense='==',
-                    rhs=0,
-                    name=f'edge_alignment_{u}_{v}'
-                )
+                # Ensure all required variables exist
+                variables = [var_name_e_uv, var_name_e_vu, var_name_x_uv]
+                if not all(var in self.qubo.variables_dict for var in variables):
+                    continue
 
-        # 4. Degree constraints: degree of each vertex <= max_degree
+                # Add linear term: +P_I * e_{u,v}
+                self.qubo.minimize.linear[var_name_e_uv] = self.qubo.minimize.linear.get(var_name_e_uv, 0) + self.P_I
+
+                # Add quadratic term: -P_I * e_{u,v}x_{u,v}
+                pair = tuple(sorted([var_name_e_uv, var_name_x_uv]))
+                self.qubo.minimize.quadratic[pair] = self.qubo.minimize.quadratic.get(pair, 0) + (-self.P_I)
+
+                # Add quadratic term: +P_I * e_{v,u}x_{u,v}
+                pair = tuple(sorted([var_name_e_vu, var_name_x_uv]))
+                self.qubo.minimize.quadratic[pair] = self.qubo.minimize.quadratic.get(pair, 0) + self.P_I
+
+    def add_constraints(self):
+        """Add constraints to enforce the DCMST problem conditions."""
+        # 1. Edge count constraint: sum of selected edges = n - 1
+        # edge_count_constraint = {
+        #     f'e_{u}_{v}': 1 for u, v in self.G.edges()
+        # }
+        # self.qubo.linear_constraint(
+        #     linear=edge_count_constraint,
+        #     sense='==',
+        #     rhs=self.n - 1,
+        #     name='edge_count_constraint'
+        # )
+
+        # 2. Acyclicity constraints using ordering variables x_{u,v}
+        # These are now handled in define_penalty_terms()        
+
+
+        # 3. Edge alignment constraints: ensure consistency between e_{u,v} and x_{u,v}
+        # These are now handled in define_penalty_terms() 
+
+        """Add connectivity constraints (Constraint iii) as linear constraints."""
         for v in self.G.nodes():
-            max_degree = self.degree_constraints.get(v, self.n - 1)
-            degree_edges = {
+            if v == self.root:
+                continue  # Skip the root node
+
+            # Sum of incoming edges to v
+            incoming_edges = {
                 f'e_{u}_{v}': 1 for u in self.G.neighbors(v)
             }
-            degree_counter_vars = {
-                f'z_{v}_{i}': 2**i for i in range(max_degree.bit_length())
-            }
 
+            # Add linear constraint: sum of incoming edges = 1
             self.qubo.linear_constraint(
-                linear={**degree_edges, **degree_counter_vars},
-                sense='<=',
-                rhs=max_degree,
+                linear=incoming_edges,
+                sense='==',
+                rhs=1,
+                name=f'connectivity_constraint_{v}'
+            )
+
+        """Add degree constraints (Constraint iv) as linear constraints."""
+        for v in self.G.nodes():
+            # Get the maximum allowed degree for v (or default)
+            max_degree = self.degree_constraints.get(v, self.n - 1)
+
+            # Number of standard binary bits
+            binary_bits = int(math.ceil(np.log2(max_degree + 1)))
+
+            # -----------------------------
+            #  1) Construct z_v as:
+            #     z_v = sum_{i=0}^{k-1} 2^i z_{v,i} + (Delta+1 - 2^k)*z_{v,k}
+            # -----------------------------
+            all_terms = {}
+
+            # (A) Standard bits (0..k-1)
+            for i in range(binary_bits-1):
+                bit_name = f"z_{v}_{i}"
+                # Coefficient +2^i
+                all_terms[bit_name] = all_terms.get(bit_name, 0.0) + (2**i)
+
+            # (B) Special last bit (kth bit):
+            #     (Delta+1 - 2^k) * z_{v,k}
+            special_bit_name = f"z_{v}_{binary_bits-1}"
+            all_terms[special_bit_name] = all_terms.get(special_bit_name, 0.0) + (
+                (max_degree + 1) - 2**(binary_bits-1)
+            )
+
+            # -----------------------------
+            #  2) Subtract edges so that
+            #     [z_v] - [sum of edges] = 0
+            # -----------------------------
+
+            if v == self.root:
+                # Root node: only outgoing edges e_{root,u}
+                for u in self.G.neighbors(self.root):
+                    edge_name = f"e_{self.root}_{u}"
+                    if edge_name in self.qubo.variables_index:
+                        # Subtract 1.0 for each edge
+                        all_terms[edge_name] = all_terms.get(edge_name, 0.0) - 1.0
+
+            else:
+                # Non-root node: consider both incoming and outgoing edges
+                for u in self.G.neighbors(v):
+                    edge_in_name = f"e_{u}_{v}"  # incoming edge
+                    if edge_in_name in self.qubo.variables_index:
+                        all_terms[edge_in_name] = all_terms.get(edge_in_name, 0.0) - 1.0
+
+                    edge_out_name = f"e_{v}_{u}"  # outgoing edge
+                    if edge_out_name in self.qubo.variables_index:
+                        all_terms[edge_out_name] = all_terms.get(edge_out_name, 0.0) - 1.0
+
+            # -----------------------------
+            #  3) Enforce equality: z_v - sum_of_edges = 0
+            # -----------------------------
+            self.qubo.linear_constraint(
+                linear=all_terms,
+                sense='==',
+                rhs=0.0,
                 name=f'degree_constraint_{v}'
             )
+         
 
     def configure_backend(self):
         if self.config.SIMULATION == "True":
@@ -138,17 +269,31 @@ class DCMST_QUBO:
 
     def solve_problem(self, optimizer, p=1):
         # Convert the problem with constraints into an unconstrained QUBO
-        converter = QuadraticProgramToQubo()
+        converter = QuadraticProgramToQubo(penalty=self.P_I)
         qubo = converter.convert(self.qubo)
         
-        # Now you can print the Ising model and continue
+        # Print the Ising model
         print(qubo.to_ising())
-        
+
+        qubo_ops, offset = qubo.to_ising()
+
         backend = self.configure_backend()
         sampler = BackendSampler(backend=backend)
-        optimizer = COBYLA()
-        qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p)
-        qaoa = MinimumEigenOptimizer(qaoa_mes)
+
+        # Define a callback function to track progress
+        def callback(eval_count, params, mean, std):
+            print(f"Eval count: {eval_count}, Parameters: {params}, Mean + offset: {mean + offset}, Std: {std}")
+
+        # Set up QAOA with the callback
+
+        seed = 42
+        np.random.seed(seed)
+
+        # Generate initial parameters using the seed
+        initial_params = np.random.uniform(0, 2 * np.pi, 2 * p)        
+
+        qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, callback=callback)
+        qaoa = MinimumEigenOptimizer(qaoa_mes, penalty=self.P_I)
 
         start_time = time.time()
         qaoa_result = qaoa.solve(self.qubo)
@@ -160,34 +305,12 @@ class DCMST_QUBO:
         print(qaoa_result.prettyprint())
 
         return qaoa_result.samples
-       
 
-# Example usage
-# if __name__ == '__main__':
-#     # Example graph
-#     G = nx.Graph()
-#     G.add_weighted_edges_from([
-#         (0, 1, 1), (1, 2, 2), (2, 3, 1), (3, 0, 4), (0, 2, 3)
-#     ])
+    def print_number_of_qubits(self):
+        """
+        Calculate and print the number of qubits used in the problem.
+        This is determined by the total number of binary variables in the QUBO.
+        """
+        num_qubits = len(self.qubo.variables)
+        print(f"Number of qubits required: {num_qubits}")
 
-#     # Degree constraints
-#     degree_constraints = {0: 2, 1: 2, 2: 2, 3: 2}
-
-#     # Initialize the DCMST problem
-#     dcmst_qubo = DCMST_QUBO(G, degree_constraints, root=0)
-#     dcmst_qubo.configure_variables()
-#     dcmst_qubo.define_objective_function()
-#     dcmst_qubo.add_constraints()
-
-#     # Solve the QUBO (example solver can be plugged in here)
-#     from qiskit_optimization.algorithms import MinimumEigenOptimizer
-#     from qiskit_algorithms import QAOA
-#     from qiskit.primitives import Sampler
-#     from qiskit_aer import AerSimulator
-
-#     sampler = Sampler(backend=AerSimulator())
-#     qaoa = QAOA(sampler=sampler, reps=1)
-#     optimizer = MinimumEigenOptimizer(qaoa)
-
-#     result = dcmst_qubo.solve(optimizer)
-#     print(result)
