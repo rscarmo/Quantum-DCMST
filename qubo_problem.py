@@ -4,7 +4,8 @@ from qiskit_ibm_runtime import QiskitRuntimeService
 from qiskit_optimization.algorithms import MinimumEigenOptimizer
 from qiskit_algorithms import QAOA
 from qiskit.primitives import Sampler
-from qiskit.primitives import BackendSampler
+from qiskit.primitives import BackendSampler    
+from qiskit_algorithms.utils import algorithm_globals
 from qiskit_aer import AerSimulator
 import time
 import networkx as nx
@@ -15,7 +16,7 @@ import math
 # matplotlib.use('Agg')
 
 class DCMST_QUBO:
-    def __init__(self, G, degree_constraints, config, root=0):
+    def __init__(self, G, degree_constraints, config, root=0, mixer = None, initial_state = None, seed = 42):
         """
         Initialize the QUBO for the Degree-Constrained Minimum Spanning Tree problem.
 
@@ -30,6 +31,9 @@ class DCMST_QUBO:
         self.degree_constraints = degree_constraints
         self.root = root
         self.config = config
+        self.mixer = mixer
+        self.initial_state = initial_state
+        self.seed = seed
         # Define the penalty coefficient
         num_vertices = self.n
         m = max(data['weight'] for _, _, data in self.G.edges(data=True))
@@ -260,6 +264,7 @@ class DCMST_QUBO:
         if self.config.SIMULATION == "True":
             print("Proceeding with simulation...")
             backend = AerSimulator()
+            backend.set_options(seed_simulator=self.seed)
         else:
             print("Proceeding with IBM Quantum hardware...")
             service = QiskitRuntimeService(channel='ibm_quantum', token=self.config.QXToken)
@@ -280,19 +285,30 @@ class DCMST_QUBO:
         backend = self.configure_backend()
         sampler = BackendSampler(backend=backend)
 
+        # sampler = Sampler(
+        #     session= backend.service, 
+        #     options={"backend": backend.name}  # or whichever device name
+        # )        
+
         # Define a callback function to track progress
         def callback(eval_count, params, mean, std):
             print(f"Eval count: {eval_count}, Parameters: {params}, Mean + offset: {mean + offset}, Std: {std}")
 
         # Set up QAOA with the callback
 
-        seed = 42
-        np.random.seed(seed)
+        np.random.seed(self.seed)
+
+        # Define the seed that will be used in the optimization process 
+        algorithm_globals.random_seed = self.seed
 
         # Generate initial parameters using the seed
         initial_params = np.random.uniform(0, 2 * np.pi, 2 * p)        
 
-        qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, callback=callback)
+        if (self.mixer is not None) and  (self.initial_state is not None):
+            qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, 
+                            mixer=self.mixer, initial_state=self.initial_state ,callback=callback)
+        else:
+            qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, callback=callback)
         qaoa = MinimumEigenOptimizer(qaoa_mes, penalty=self.P_I)
 
         start_time = time.time()
