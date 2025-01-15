@@ -14,7 +14,7 @@ def main():
     # Example usage:
     N = 4
     weight_range = (10, 100)
-    seed = 78
+    seed = 60
     max_degree = 2 
 
     # Instantiate and create the graph
@@ -40,7 +40,14 @@ def main():
     degree_constraints = {node: max_degree for node in graph.G.nodes()}
 
     # Configure and solve the QUBO problem
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config)
+    # This warm_start is for using the built-in function from Qiskit to solve a Qubo problem using warm-start techinique
+    # Here for this kind of problem this does not work, because if we relax the x variables, the problem becomes non-convex. 
+    # So, we have to mantain those variables binary and relax all the others. 
+        
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.09, warm_start=False)
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, warm_start=False)
+
+
     qubo_problem.configure_variables()
     qubo_problem.define_objective_function()
     qubo_problem.add_constraints()
@@ -53,21 +60,23 @@ def main():
 
     samples = qubo_problem.solve_problem(optimizer, p)
 
-    # This is just the test if the correct answers are the same as the most sampled ones. 
-    # def format_qaoa_samples(samples, max_len: int = 10):
-    #     qaoa_res = []
-    #     for s in samples:
-    #         bitstring = ''.join(str(int(v)) for v in s.x)
-    #         # bitstring = bitstring[::-1]            
-    #         qaoa_res.append((bitstring, s.fval, s.probability))
+    # This is just the test if the correct answers are the same as the most sampled.
+    def format_qaoa_samples(samples, max_len: int = 10):
+        qaoa_res = []
+        for s in samples:
+            bitstring = ''.join(str(int(v)) for v in s.x)
+            # bitstring = bitstring[::-1]            
+            qaoa_res.append((bitstring, s.fval, s.probability))
 
-    #     res = sorted(qaoa_res, key=lambda x: -x[2])[0:max_len]
+        res = sorted(qaoa_res, key=lambda x: -x[2])[0:max_len]
 
-    #     return [(_[0] + f": value: {_[1]:.3f}, probability: {1e2*_[2]:.1f}%") for _ in res]
+        return [(_[0] + f": value: {_[1]:.3f}, probability: {1e2*_[2]:.1f}%") for _ in res]
 
 
-    # print(format_qaoa_samples(samples))   
+    print(format_qaoa_samples(samples))   
 
+    # It seems to me that the best result considered by qiskit only takes into 
+    # account the objective function and constraints, but not  penalties added directly to the QuadraticProgramm.
     solution = qubo_problem.solution
 
     # Visualize the solution

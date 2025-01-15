@@ -123,7 +123,7 @@ def interpret_solution(bitstring, adj_matrix, N, Delta):
             # Simplified check: if exactly one direction is chosen
             # and the ordering is consistent with that direction.
             if ((e_uv == '1' and x_uv == '1') or
-                (e_vu == '1' and x_uv == '1')) and (e_uv != e_vu) and ((u, v) not in added_edges):
+                (e_vu == '1' and x_uv == '0')) and (e_uv != e_vu) and ((u, v) not in added_edges):
                 weight = adj_matrix[u, v]
                 mst_edges.append((u, v, weight))
                 mst_graph.add_edge(u, v, weight=weight)
@@ -219,6 +219,9 @@ def draw_solution(graph, solution, title="Minimum Spanning Tree Solution"):
         var_name = f'e_{u}_{v}'
         if solution.get(var_name, 0) == 1:
             mst_edges.append((u, v))
+        var_name = f'e_{v}_{u}'
+        if solution.get(var_name, 0) == 1:
+            mst_edges.append((v, u))            
 
     if mst_edges:
         pos = graph.pos or nx.spring_layout(graph.G)

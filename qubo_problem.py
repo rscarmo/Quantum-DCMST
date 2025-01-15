@@ -1,22 +1,27 @@
 from qiskit_optimization.problems import QuadraticProgram
 from qiskit_optimization.converters import QuadraticProgramToQubo
 from qiskit_ibm_runtime import QiskitRuntimeService
-from qiskit_optimization.algorithms import MinimumEigenOptimizer
+from qiskit_optimization.algorithms import MinimumEigenOptimizer, CplexOptimizer
 from qiskit_algorithms import QAOA
 from qiskit.primitives import Sampler
 from qiskit.primitives import BackendSampler    
 from qiskit_algorithms.utils import algorithm_globals
+from qiskit_optimization.algorithms import WarmStartQAOAOptimizer
 from qiskit_aer import AerSimulator
+from qiskit_optimization.problems.variable import VarType
+from qiskit import QuantumCircuit
+from qiskit.circuit import Parameter
 import time
 import networkx as nx
 import numpy as np
 import math
+import copy
 
 # import matplotlib
 # matplotlib.use('Agg')
 
 class DCMST_QUBO:
-    def __init__(self, G, degree_constraints, config, root=0, mixer = None, initial_state = None, seed = 42):
+    def __init__(self, G, degree_constraints, config, root=0, mixer = None, initial_state = None,  regularization = 0, seed = 42, warm_start = False):
         """
         Initialize the QUBO for the Degree-Constrained Minimum Spanning Tree problem.
 
@@ -34,10 +39,12 @@ class DCMST_QUBO:
         self.mixer = mixer
         self.initial_state = initial_state
         self.seed = seed
+        self.warm_start = warm_start 
+        self.epsilon =  regularization
         # Define the penalty coefficient
         num_vertices = self.n
         m = max(data['weight'] for _, _, data in self.G.edges(data=True))
-        self.P_I = (num_vertices - 1) * m + 1        
+        self.P_I = (num_vertices - 1) * m + 1      
         print('P_I', self.P_I)
 
     def configure_variables(self):
@@ -71,28 +78,28 @@ class DCMST_QUBO:
                 self.qubo.binary_var(name=var_name_z)
 
     def define_objective_function(self):
-        """Minimize the total weight of selected edges."""
-        objective_terms = {}
+        """Define the objective function including penalties."""
+        # Initialize dictionaries to accumulate terms
+        linear_terms = {}
+        quadratic_terms = {}
 
+        # 1. Minimize the total weight of selected edges
         # Root edges: Only consider one direction (v0 -> u)
         for u in self.G.neighbors(self.root):
             edge_var = f'e_{self.root}_{u}'
             weight = self.G[self.root][u]['weight']
-            objective_terms[edge_var] = weight
+            linear_terms[edge_var] = linear_terms.get(edge_var, 0) + weight
 
         # Non-root edges: Include both directions (u -> v and v -> u)
         for u, v, w in self.G.edges(data='weight'):
             if u != self.root and v != self.root:
                 edge_var_uv = f'e_{u}_{v}'
                 edge_var_vu = f'e_{v}_{u}'
-                objective_terms[edge_var_uv] = w
-                objective_terms[edge_var_vu] = w
+                linear_terms[edge_var_uv] = linear_terms.get(edge_var_uv, 0) + w
+                linear_terms[edge_var_vu] = linear_terms.get(edge_var_vu, 0) + w
 
-        # Add the linear objective terms
-        self.qubo.minimize(linear=objective_terms)
-
-    def add_penalty_terms(self):
-        # 1. Acyclicity via Topological Ordering Penalty Terms
+        # 2. Add penalties for constraints
+        # Acyclicity via Topological Ordering Penalty Terms
         for u in range(1, self.n):
             for v in range(u + 1, self.n):
                 for w in range(v + 1, self.n):
@@ -106,38 +113,21 @@ class DCMST_QUBO:
 
                     # Ensure all required variables exist
                     variables = [var_name_x_uv, var_name_x_vw, var_name_x_uw]
-                    if not all(var in self.qubo.variables_dict for var in variables):
+                    if not all(var in self.qubo.variables_index for var in variables):
                         continue
 
-                    # Initialize linear and quadratic terms
-                    linear_terms = {}
-                    quadratic_terms = {}
-
-                    # Add linear term: +P_I * x_{u,w}
+                    # Accumulate linear term: +P_I * x_{u,w}
                     linear_terms[var_name_x_uw] = linear_terms.get(var_name_x_uw, 0) + self.P_I
 
-                    # Add quadratic terms
-                    # +P_I * x_{u,v}x_{v,w}
-                    pair_uv_vw = tuple(sorted([var_name_x_uv, var_name_x_vw]))
-                    quadratic_terms[pair_uv_vw] = quadratic_terms.get(pair_uv_vw, 0) + self.P_I
+                    # Accumulate quadratic terms
+                    quadratic_terms[tuple(sorted([var_name_x_uv, var_name_x_vw]))] = \
+                        quadratic_terms.get(tuple(sorted([var_name_x_uv, var_name_x_vw])), 0) + self.P_I
+                    quadratic_terms[tuple(sorted([var_name_x_uv, var_name_x_uw]))] = \
+                        quadratic_terms.get(tuple(sorted([var_name_x_uv, var_name_x_uw])), 0) - self.P_I
+                    quadratic_terms[tuple(sorted([var_name_x_uw, var_name_x_vw]))] = \
+                        quadratic_terms.get(tuple(sorted([var_name_x_uw, var_name_x_vw])), 0) - self.P_I
 
-                    # -P_I * x_{u,v}x_{u,w}
-                    pair_uv_uw = tuple(sorted([var_name_x_uv, var_name_x_uw]))
-                    quadratic_terms[pair_uv_uw] = quadratic_terms.get(pair_uv_uw, 0) + (- self.P_I)
-
-                    # -P_I * x_{u,w}x_{v,w}
-                    pair_uw_vw = tuple(sorted([var_name_x_uw, var_name_x_vw]))
-                    quadratic_terms[pair_uw_vw] = quadratic_terms.get(pair_uw_vw, 0) + (- self.P_I)
-
-                    # Add all terms to the QUBO
-                    for var, coeff in linear_terms.items():
-                        self.qubo.minimize.linear[var] = self.qubo.minimize.linear.get(var, 0) + coeff
-
-                    for pair, coeff in quadratic_terms.items():
-                        self.qubo.minimize.quadratic[pair] = self.qubo.minimize.quadratic.get(pair, 0) + coeff
-
-
-        # 5. Alignment Constraint (Term (ii))
+        # Alignment Constraint (Term (ii))
         for (u, v) in self.G.edges():
             if u < v and u != self.root and v != self.root:
                 var_name_e_uv = f'e_{u}_{v}'
@@ -146,19 +136,20 @@ class DCMST_QUBO:
 
                 # Ensure all required variables exist
                 variables = [var_name_e_uv, var_name_e_vu, var_name_x_uv]
-                if not all(var in self.qubo.variables_dict for var in variables):
+                if not all(var in self.qubo.variables_index for var in variables):
                     continue
 
-                # Add linear term: +P_I * e_{u,v}
-                self.qubo.minimize.linear[var_name_e_uv] = self.qubo.minimize.linear.get(var_name_e_uv, 0) + self.P_I
+                # Accumulate linear term: +P_I * e_{u,v}
+                linear_terms[var_name_e_uv] = linear_terms.get(var_name_e_uv, 0) + self.P_I
 
-                # Add quadratic term: -P_I * e_{u,v}x_{u,v}
-                pair = tuple(sorted([var_name_e_uv, var_name_x_uv]))
-                self.qubo.minimize.quadratic[pair] = self.qubo.minimize.quadratic.get(pair, 0) + (-self.P_I)
+                # Accumulate quadratic terms
+                quadratic_terms[tuple(sorted([var_name_e_uv, var_name_x_uv]))] = \
+                    quadratic_terms.get(tuple(sorted([var_name_e_uv, var_name_x_uv])), 0) - self.P_I
+                quadratic_terms[tuple(sorted([var_name_e_vu, var_name_x_uv]))] = \
+                    quadratic_terms.get(tuple(sorted([var_name_e_vu, var_name_x_uv])), 0) + self.P_I
 
-                # Add quadratic term: +P_I * e_{v,u}x_{u,v}
-                pair = tuple(sorted([var_name_e_vu, var_name_x_uv]))
-                self.qubo.minimize.quadratic[pair] = self.qubo.minimize.quadratic.get(pair, 0) + self.P_I
+        # 3. Set the final objective function in the QUBO
+        self.qubo.minimize(linear=linear_terms, quadratic=quadratic_terms)
 
     def add_constraints(self):
         """Add constraints to enforce the DCMST problem conditions."""
@@ -270,7 +261,60 @@ class DCMST_QUBO:
             service = QiskitRuntimeService(channel='ibm_quantum', token=self.config.QXToken)
             backend = service.least_busy(n_qubits=127, operational=True, simulator=False)
             print(f"Connected to {backend.name}!")
-        return backend             
+        return backend    
+
+    def relax_problem(self, problem) -> QuadraticProgram:
+        """Change all variables to continuous."""
+        relaxed_problem = copy.deepcopy(problem)
+        for variable in relaxed_problem.variables:
+            if 'x' not in variable.name: 
+                variable.vartype = VarType.CONTINUOUS
+
+        return relaxed_problem    
+    
+    def compute_theta(self, c_star):
+        """
+        Compute the theta value based on c_star and epsilon.
+        
+        Parameters:
+        - c_star: The c_i^* value for a specific variable.
+        - epsilon: The threshold value (default is 0.25).
+        
+        Returns:
+        - theta: The computed theta value.
+        """
+        if self.epsilon <= c_star <= 1 - self.epsilon:
+            theta = 2 * np.arcsin(np.sqrt(c_star))
+        elif c_star < self.epsilon:
+            theta = 2 * np.arcsin(np.sqrt(self.epsilon))
+        else:  # c_star > 1 - self.epsilon
+            theta = 2 * np.arcsin(np.sqrt(1 - self.epsilon))
+        return theta
+   
+
+    def initial_state_RY(self, thetas):        
+        init_qc = QuantumCircuit(len(self.qubo.variables))
+        for idx, theta in enumerate(thetas):
+            init_qc.ry(theta, idx)
+
+        init_qc.draw(output="mpl", style="clifford")  
+
+        return init_qc
+
+
+    def mixer_warm(self, thetas):
+        beta = Parameter("β")
+
+        ws_mixer = QuantumCircuit(len(self.qubo.variables))
+        for idx, theta in enumerate(thetas):
+            ws_mixer.ry(-theta, idx)
+            ws_mixer.rz(-2 * beta, idx)
+            ws_mixer.ry(theta, idx)
+
+        ws_mixer.draw(output="mpl", style="clifford")  
+
+        return ws_mixer      
+
 
     def solve_problem(self, optimizer, p=1):
         # Convert the problem with constraints into an unconstrained QUBO
@@ -303,13 +347,35 @@ class DCMST_QUBO:
 
         # Generate initial parameters using the seed
         initial_params = np.random.uniform(0, 2 * np.pi, 2 * p)        
-
         if (self.mixer is not None) and  (self.initial_state is not None):
+            if self.mixer == 'Warm':  
+                print(self.qubo.prettyprint())
+                qp = self.relax_problem(qubo)
+                print(qp.prettyprint())
+                sol = CplexOptimizer().solve(qp)
+                print(sol.prettyprint())  
+                c_stars = sol.samples[0].x
+
+                # Example usage:
+                thetas = [self.compute_theta(c_star) for c_star in c_stars] 
+
+                print(thetas)
+
+                self.mixer = self.mixer_warm(thetas)
+                self.initial_state = self.initial_state_RY(thetas)
             qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, 
                             mixer=self.mixer, initial_state=self.initial_state ,callback=callback)
         else:
             qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, callback=callback)
-        qaoa = MinimumEigenOptimizer(qaoa_mes, penalty=self.P_I)
+            if self.warm_start:
+                qaoa_mes = WarmStartQAOAOptimizer(
+                    pre_solver=CplexOptimizer(), relax_for_pre_solver=True, qaoa=qaoa_mes, epsilon=0.0, penalty=self.P_I
+                )
+
+        if not self.warm_start:
+            qaoa = MinimumEigenOptimizer(qaoa_mes, penalty=self.P_I)
+        else:
+            qaoa = qaoa_mes
 
         start_time = time.time()
         qaoa_result = qaoa.solve(self.qubo)
