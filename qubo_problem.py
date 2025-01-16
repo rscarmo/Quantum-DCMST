@@ -11,12 +11,15 @@ from qiskit_aer import AerSimulator
 from qiskit_optimization.problems.variable import VarType
 from qiskit import QuantumCircuit
 from qiskit.circuit import Parameter
+from qiskit.circuit.library import RZGate, RXGate
+from itertools import product
 import time
 import networkx as nx
 import numpy as np
 import math
 import copy
-
+import pandas as pd
+import sys
 # import matplotlib
 # matplotlib.use('Agg')
 
@@ -41,6 +44,9 @@ class DCMST_QUBO:
         self.seed = seed
         self.warm_start = warm_start 
         self.epsilon =  regularization
+
+        self.max_degree = self.degree_constraints.get(self.n - 1, self.n - 1)        
+        self.binary_bits = int(np.ceil(np.log2(self.max_degree+1)))        
         # Define the penalty coefficient
         num_vertices = self.n
         m = max(data['weight'] for _, _, data in self.G.edges(data=True))
@@ -70,10 +76,8 @@ class DCMST_QUBO:
                 self.qubo.binary_var(name=var_name_x)
 
         # Degree counter variables z_{v,i}
-        max_degree = self.degree_constraints.get(v, self.n - 1)        
-        binary_bits = int(np.ceil(np.log2(max_degree+1)))
         for v in self.G.nodes():
-            for i in range(binary_bits):
+            for i in range(self.binary_bits):
                 var_name_z = f'z_{v}_{i}'
                 self.qubo.binary_var(name=var_name_z)
 
@@ -192,10 +196,9 @@ class DCMST_QUBO:
         """Add degree constraints (Constraint iv) as linear constraints."""
         for v in self.G.nodes():
             # Get the maximum allowed degree for v (or default)
-            max_degree = self.degree_constraints.get(v, self.n - 1)
+            # max_degree = self.degree_constraints.get(v, self.n - 1)
 
             # Number of standard binary bits
-            binary_bits = int(math.ceil(np.log2(max_degree + 1)))
 
             # -----------------------------
             #  1) Construct z_v as:
@@ -204,16 +207,16 @@ class DCMST_QUBO:
             all_terms = {}
 
             # (A) Standard bits (0..k-1)
-            for i in range(binary_bits-1):
+            for i in range(self.binary_bits-1):
                 bit_name = f"z_{v}_{i}"
                 # Coefficient +2^i
                 all_terms[bit_name] = all_terms.get(bit_name, 0.0) + (2**i)
 
             # (B) Special last bit (kth bit):
             #     (Delta+1 - 2^k) * z_{v,k}
-            special_bit_name = f"z_{v}_{binary_bits-1}"
+            special_bit_name = f"z_{v}_{self.binary_bits-1}"
             all_terms[special_bit_name] = all_terms.get(special_bit_name, 0.0) + (
-                (max_degree + 1) - 2**(binary_bits-1)
+                (self.max_degree + 1) - 2**(self.binary_bits-1)
             )
 
             # -----------------------------
@@ -314,7 +317,311 @@ class DCMST_QUBO:
         ws_mixer.draw(output="mpl", style="clifford")  
 
         return ws_mixer      
+    
+    def validate_topological_states(self, n_variables):
+        """
+        Valida os estados possíveis para variáveis x_u,v para garantir que são acíclicos.
 
+        Parâmetros:
+        n_variables (int): Número de variáveis x_u,v no grafo (binomial(N-1, 2)).
+
+        Retorna:
+        List[str]: Lista de estados válidos no formato binário (e.g., ["000", "001"]).
+        """
+        valid_states = []
+        # Gera todas as combinações possíveis de bits para n_variables
+        all_states = product([0, 1], repeat=n_variables)
+    
+        for state in all_states:
+            # Verifica se o estado é transitivo (condição para ser válido)
+            if self.is_transitive(state, n_variables):
+                # Adiciona o estado válido na lista como string binária
+                valid_states.append("".join(map(str, state)))
+        
+        return valid_states
+
+
+    def is_transitive(self, state, n_variables):
+        """
+        Verifica se um estado é transitivo, ou seja, se não cria ciclos.
+
+        Parâmetros:
+        state (tuple): Um estado das variáveis x_u,v (e.g., (0, 1, 0)).
+        n_variables (int): Número de variáveis no estado.
+
+        Retorna:
+        bool: True se o estado é válido, False caso contrário.
+        """
+        # Mapeia variáveis x_u,v para uma matriz de ordenação
+        matrix_size = int((1 + (1 + 8 * n_variables)**0.5) // 2)  # Número de vértices no grafo
+        ordering_matrix = [[0] * matrix_size for _ in range(matrix_size)]
+        
+        # Preenche a matriz de ordenação com base no estado
+        index = 0
+        for u in range(matrix_size):
+            for v in range(u + 1, matrix_size):
+                ordering_matrix[u][v] = state[index]
+                ordering_matrix[v][u] = 1 - state[index]
+                index += 1
+
+        # Verifica se a matriz representa uma ordenação acíclica (transitiva)
+        for u in range(matrix_size):
+            for v in range(matrix_size):
+                for w in range(matrix_size):
+                    if ordering_matrix[u][v] == 1 and ordering_matrix[v][w] == 1:
+                        if ordering_matrix[u][w] != 1:
+                            return False
+        return True   
+
+    def generate_z_states(self):
+        """
+        Gera a lista de estados binários permitidos para as variáveis z_v,i, 
+        baseando-se no valor de delta.
+
+        Retorna:
+        List[str]: Lista de estados binários permitidos.
+        """
+        # Número de bits necessários para representar z_v
+        n_bits = (self.max_degree).bit_length()  # ceil(log2(delta + 1))
+
+        # Gera todos os estados possíveis com n_bits, mas limitados de 0 a delta
+        all_states = [
+            format(i, f'0{n_bits}b')  # Formata o número como uma string binária de n_bits
+            for i in range(self.max_degree + 1)  # Inclui apenas valores de 0 a delta
+        ]
+        
+        return all_states
+
+    def generate_states_excluding_specific(self, n_qubits, exclude_state):
+        """
+        Gera todos os estados possíveis para n_qubits, excluindo um estado específico.
+
+        Parâmetros:
+        n_qubits (int): Número de qubits.
+        exclude_state (str): O estado binário a ser excluído (e.g., '000').
+
+        Retorna:
+        List[str]: Lista de estados possíveis em formato binário, exceto o estado excluído.
+        """
+        # Gera todos os estados binários possíveis
+        all_states = product([0, 1], repeat=n_qubits)
+        
+        # Exclui o estado especificado
+        valid_states = [
+            "".join(map(str, state)) 
+            for state in all_states 
+            if "".join(map(str, state)) != exclude_state
+        ]
+        
+        return valid_states     
+
+    def prepare_superposition(self, qc, valid_states, qubit_indices):
+        """
+        Prepara uma superposição uniforme dos estados válidos usando Qiskit.
+
+        Parâmetros:
+        qc (QuantumCircuit): O circuito quântico onde a superposição será preparada.
+        valid_states (list of str): Lista de estados válidos no formato binário (e.g., ["000", "001"]).
+        qubit_indices (list of int): Índices dos qubits no circuito onde os estados serão aplicados.
+
+        Retorna:
+        QuantumCircuit: O circuito com a superposição preparada.
+        """
+        # Número de qubits
+        n_qubits = len(qubit_indices)
+        # Número de estados válidos
+        n_states = len(valid_states)
+        
+        # Calcula os amplitudes necessários para a superposição uniforme
+        amplitude = 1 / np.sqrt(n_states)
+        state_vector = np.zeros(2**n_qubits, dtype=complex)
+        
+        # Define as amplitudes para os estados válidos
+        for state in valid_states:
+            index = int(state, 2)  # Converte o estado binário para um índice decimal
+            state_vector[index] = amplitude
+        
+        # Adiciona o estado inicial ao circuito
+        qc.initialize(state_vector, qubit_indices)
+        
+        return qc
+
+    def initial_state_OHE(self):  
+        init_qc = QuantumCircuit(len(self.qubo.variables))
+
+        idx = 0
+        self.group_e_v0 = []
+        group_e_uv = []
+        self.groups_e_uv = []
+        group_z_i = []
+        self.groups_z_i = []
+        self.group_x = []
+
+        # (e_uv = 1 and e_vu = 0) or (e_uv = 0 and e_vu = 1). So, the state |11> is forbidden
+        self.valid_e_uv_states = self.generate_states_excluding_specific(2, '11')
+        self.valid_z_i_states = self.generate_z_states()
+
+        for variable in self.qubo.variables:
+
+            if 'e_' + self.root in variable.name: 
+                self.group_e_v0.append(idx)
+            elif 'e' in variable.name:
+                if idx not in group_e_uv:
+                    group_e_uv.append(idx)
+                    group_e_uv.append(idx+1)
+                    self.prepare_superposition(init_qc, self.valid_e_uv_states, group_e_uv)
+                    self.groups_e_uv.append(group_e_uv)
+                else:
+                    group_e_uv = []
+
+            elif 'z' in variable.name:
+                if idx not in group_z_i:
+                    for i in range(self.binary_bits):
+                        group_z_i.append(idx+i)
+                    self.groups_z_i.append(group_z_i)
+                    self.prepare_superposition(init_qc, self.valid_z_i_states, group_z_i)
+                else:
+                    group_z_i = []
+            elif 'x' in variable.name:
+                self.group_x.append(idx)
+
+            idx += 1
+
+        self._num_x = len(self.group_x)
+        self._num_e_v0 = len(self.group_e_v0)
+        # I will use this valid_x_states list, ['000000', '000001', ...], to prepare the initial state
+        self.valid_x_states = self.validate_topological_states(self._num_x)
+        self.prepare_superposition(init_qc, self.valid_x_states, self.group_x)
+
+        # I'm not certain if this worth the cost
+        # valid_e_v0_states = self.generate_states_excluding_specific(self._num_e_v0, '0'*self._num_e_v0)
+        # self.prepare_superposition(init_qc, valid_e_v0_states, group_e_v0)
+        for id in self.group_e_v0:
+            init_qc.h(id)
+
+        init_qc.draw(output="mpl", style="clifford") 
+
+        return init_qc
+
+
+    def mixer_LogicalX(self, hamiltonian, qubit_indices, beta, circuit):
+        """
+        Implementa um mixer no Qiskit baseado no Hamiltoniano fornecido com trotterização otimizada.
+
+        Args:
+            hamiltonian (list of tuples): Lista de termos do Hamiltoniano.
+                                        Cada termo é (pauli_string, restrições),
+                                        onde restrições é uma lista de (pauli_string, coeficiente).
+            qubit_indices (list of int): Índices dos qubits sobre os quais o mixer deve atuar.
+            beta (float): Parâmetro do QAOA associado ao mixer.
+            circuit (QuantumCircuit): Circuito utilizado para preparar o mixer.
+
+        Returns:
+            QuantumCircuit: Circuito implementando o mixer.
+        """
+        # Verificar consistência dos índices de qubits
+        num_qubits = len(qubit_indices)
+
+        # Para cada termo no Hamiltoniano
+        for main_pauli_string, constraints in hamiltonian:
+            for constraint_pauli_string, coef in constraints:
+                # Combinar o termo principal com a restrição
+                combined_pauli_string = ''.join(
+                    main_pauli_string[i] if main_pauli_string[i] != 'I' else constraint_pauli_string[i]
+                    for i in range(len(main_pauli_string))
+                )
+
+                # Mapear operadores para os qubits
+                assert len(combined_pauli_string) == num_qubits, "O tamanho da string de Pauli deve corresponder ao número de qubits."
+
+                # Aplicar o termo como um circuito
+                involved_qubits = []
+                for i, op in enumerate(combined_pauli_string):
+                    if op == 'X':
+                        circuit.h(qubit_indices[i])
+                        involved_qubits.append(qubit_indices[i])
+                    elif op == 'Z':
+                        involved_qubits.append(qubit_indices[i])
+                    elif op == 'I':
+                        continue
+
+                # Aplicar controle para os qubits envolvidos
+                if len(involved_qubits) > 1:
+                    # Aplicar CNOTs para criar a cadeia de controles
+                    for i in range(len(involved_qubits) - 1):
+                        circuit.cx(involved_qubits[i], involved_qubits[i + 1])
+
+                # Aplicar a rotação parametrizada no último qubit da cadeia
+                rotation_qubit = involved_qubits[-1]
+                circuit.rz(-2 * beta * coef, rotation_qubit)
+
+                # Reverter os CNOTs
+                if len(involved_qubits) > 1:
+                    for i in reversed(range(len(involved_qubits) - 1)):
+                        circuit.cx(involved_qubits[i], involved_qubits[i + 1])
+
+                # Reverter Hadamard gates
+                for i, op in enumerate(combined_pauli_string):
+                    if op == 'X':
+                        circuit.h(qubit_indices[i])
+
+        return circuit
+
+    def mixer_customized(self):
+        mixer_circuit = QuantumCircuit(len(self.qubo.variables))
+        beta = Parameter("β")
+
+        # For the e_v0_u variables
+        for id in self.group_e_v0:
+            mixer_circuit.rx(-2*beta, id)
+
+        # For the e_uv and e_vu variables
+        # Needs to search in the hamiltonian_mixers.cvs using the valid_states
+        df = pd.read_csv('hamiltonian_mixers.csv')
+
+        for ids in self.groups_e_uv:
+            # Procurar o Hamiltoniano correspondente ao estado
+            filtered_row = df[df['states'] == str(self.valid_e_uv_states)]
+            
+            if not filtered_row.empty:  # Verificar se encontrou o estado
+                hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
+                
+                # Chamar a função mixer_LogicalX com os dados encontrados
+                self.mixer_LogicalX(hamiltonian, ids, beta, mixer_circuit)
+            else:
+                print(f"Estado {self.valid_e_uv_states} não encontrado no arquivo CSV.")
+                sys.exit()
+
+        # For the x_uv
+        # Needs to search in the hamiltonian_mixers.cvs using the valid_states
+        filtered_row = df[df['states'] == str(self.valid_x_states)]
+        
+        if not filtered_row.empty:  # Verificar se encontrou o estado
+            hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
+            
+            # Chamar a função mixer_LogicalX com os dados encontrados
+            self.mixer_LogicalX(hamiltonian, self.group_x, beta, mixer_circuit)
+        else:
+            print(f"Estado {self.valid_x_states} não encontrado no arquivo CSV.")
+            sys.exit()        
+
+        # For the z_vi
+        # Needs to search in the hamiltonian_mixers.cvs using the valid_states
+        for ids in self.groups_z_i:
+            filtered_row = df[df['states'] == str(self.valid_z_i_states)]
+            
+            if not filtered_row.empty:  # Verificar se encontrou o estado
+                hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
+                
+                # Chamar a função mixer_LogicalX com os dados encontrados
+                self.mixer_LogicalX(hamiltonian, ids, beta, mixer_circuit)
+            else:
+                print(f"Estado {self.valid_x_states} não encontrado no arquivo CSV.")
+                sys.exit()  
+
+        mixer_circuit.draw(output="mpl", style="clifford") 
+
+        return mixer_circuit                                   
 
     def solve_problem(self, optimizer, p=1):
         # Convert the problem with constraints into an unconstrained QUBO
@@ -363,6 +670,10 @@ class DCMST_QUBO:
 
                 self.mixer = self.mixer_warm(thetas)
                 self.initial_state = self.initial_state_RY(thetas)
+            elif self.mixer == 'LogicalX':
+                self.initial_state = self.initial_state_OHE()
+                self.mixer = self.mixer_customized()
+            
             qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, 
                             mixer=self.mixer, initial_state=self.initial_state ,callback=callback)
         else:
