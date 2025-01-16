@@ -14,7 +14,7 @@ def main():
     # Example usage:
     N = 4
     weight_range = (10, 100)
-    seed = 60
+    seed = 78 #60
     max_degree = 2 
 
     # Instantiate and create the graph
@@ -44,8 +44,8 @@ def main():
     # Here for this kind of problem this does not work, because if we relax the x variables, the problem becomes non-convex. 
     # So, we have to mantain those variables binary and relax all the others. 
         
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.09)
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, warm_start=False)
 
 
