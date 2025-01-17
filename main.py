@@ -40,13 +40,22 @@ def main():
     degree_constraints = {node: max_degree for node in graph.G.nodes()}
 
     # Configure and solve the QUBO problem
+
     # This warm_start=True is for using the built-in function from Qiskit to solve a Qubo problem using warm-start techinique
     # Here for this kind of problem this does not work, because if we relax the x variables, the problem becomes non-convex. 
     # So, we have to mantain those variables binary and relax all the others. 
-        
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, warm_start=False)
+
+    # With Warm-Starting
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
+    
+    # With LocicalX Mixer - This is not working yet
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
+
+    # With mixer X - Standard formulation
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config)
+
+    # With mixer X - Standard formulation + redundant conditions
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, redundancy=True)
 
 
     qubo_problem.configure_variables()

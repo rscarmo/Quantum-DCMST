@@ -12,6 +12,8 @@ from qiskit_optimization.problems.variable import VarType
 from qiskit import QuantumCircuit
 from qiskit.circuit import Parameter
 from qiskit.circuit.library import RZGate, RXGate
+from qiskit.quantum_info import SparsePauliOp
+from qiskit.circuit.library import PauliEvolutionGate
 from qiskit import transpile
 from itertools import product
 import time
@@ -25,7 +27,8 @@ import sys
 # matplotlib.use('Agg')
 
 class DCMST_QUBO:
-    def __init__(self, G, degree_constraints, config, root=0, mixer = None, initial_state = None,  regularization = 0, seed = 42, warm_start = False):
+    def __init__(self, G, degree_constraints, config, root=0, mixer = None, initial_state = None,  
+                 regularization = 0, seed = 42, warm_start = False, redundancy = False):
         """
         Initialize the QUBO for the Degree-Constrained Minimum Spanning Tree problem.
 
@@ -45,6 +48,7 @@ class DCMST_QUBO:
         self.seed = seed
         self.warm_start = warm_start 
         self.epsilon =  regularization
+        self.redundancy = redundancy
 
         self.max_degree = self.degree_constraints.get(self.n - 1, self.n - 1)        
         self.binary_bits = int(np.ceil(np.log2(self.max_degree+1)))        
@@ -158,16 +162,31 @@ class DCMST_QUBO:
 
     def add_constraints(self):
         """Add constraints to enforce the DCMST problem conditions."""
-        # 1. Edge count constraint: sum of selected edges = n - 1
-        # edge_count_constraint = {
-        #     f'e_{u}_{v}': 1 for u, v in self.G.edges()
-        # }
-        # self.qubo.linear_constraint(
-        #     linear=edge_count_constraint,
-        #     sense='==',
-        #     rhs=self.n - 1,
-        #     name='edge_count_constraint'
-        # )
+        # 1.1 and 1.2 are redundant restrictions, trying to improve the results.
+        # ------------------------------------------------------------------------------------
+        if self.redundancy:
+            # 1.1 Edge count constraint: sum of selected edges = n - 1
+            edge_count_constraint = {
+                f'e_{u}_{v}': 1 for u, v in self.G.edges() if v != self.root
+            }
+            self.qubo.linear_constraint(
+                linear=edge_count_constraint,
+                sense='==',
+                rhs=self.n - 1,
+                name='edge_count_constraint'
+            )
+
+            # 1.2 Adicionar restrições para garantir e_{u,v} + e_{v,u} <= 1, quando não envolvem a raíz
+            for u, v in self.G.edges:
+                if u != self.root and v != self.root:
+                    # Evitar redundância (adicionar apenas uma vez por par de arestas)
+                    self.qubo.linear_constraint(
+                        linear={f'e_{u}_{v}': 1, f'e_{v}_{u}': 1},
+                        sense='<=',
+                        rhs=1,  # Somente uma dessas variáveis pode ser 1 ao mesmo tempo
+                        name=f'anti_symmetric_constraint_{u}_{v}'
+                    )
+        # --------------------------------------------------------------------------------------
 
         # 2. Acyclicity constraints using ordering variables x_{u,v}
         # These are now handled in define_penalty_terms()        
@@ -631,7 +650,10 @@ class DCMST_QUBO:
             else:
                 print(f"Estado {self.valid_x_states} referente às variaveis z_vi não encontrado no arquivo CSV.")
                 sys.exit()  
-
+        # hamiltonian = SparsePauliOp.from_list([('IIX', 1), ('IZX', 1), ('IXZ', 1),
+        #                                ('IXI', 1), ('XII', 1)])
+        # op = PauliEvolutionGate(hamiltonian, time=beta)
+        # mixer_circuit.append(op, [10,11,12])
         # print(mixer_circuit)
 
         mixer_circuit.draw(output="mpl").savefig("mixer_circuit.png")
