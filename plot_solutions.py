@@ -201,7 +201,7 @@ def sample_and_plot_histogram(samples, adj_matrix, N, Delta, interpret_solution_
         cost = sum(adj_matrix[u][v] for u, v, _ in solution)
         print(f"Solution {i}: {solution}\nFrequency: {frequency}\nTotal Cost: {cost:.2f}\n")
 
-    return [solution for solution, _ in most_common_valid_solutions]
+    return most_common_valid_solutions
 
 
 def draw_solution(graph, solution, title="Minimum Spanning Tree Solution"):

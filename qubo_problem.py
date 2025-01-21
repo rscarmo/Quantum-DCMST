@@ -16,6 +16,8 @@ from qiskit.quantum_info import SparsePauliOp
 from qiskit.circuit.library import PauliEvolutionGate
 from qiskit import transpile
 from itertools import product
+from qiskit_aer.primitives import Estimator as AerEstimator
+from qiskit_algorithms import VQE
 import time
 import networkx as nx
 import numpy as np
@@ -28,7 +30,7 @@ import sys
 
 class DCMST_QUBO:
     def __init__(self, G, degree_constraints, config, root=0, mixer = None, initial_state = None,  
-                 regularization = 0, seed = 42, warm_start = False, redundancy = False):
+                 regularization = 0, seed = 42, warm_start = False, redundancy = False, VQE = False, Metaheuristic =False):
         """
         Initialize the QUBO for the Degree-Constrained Minimum Spanning Tree problem.
 
@@ -47,8 +49,11 @@ class DCMST_QUBO:
         self.initial_state = initial_state
         self.seed = seed
         self.warm_start = warm_start 
+        self.VQE = VQE
         self.epsilon =  regularization
         self.redundancy = redundancy
+        self.Metaheuristic = Metaheuristic
+        self.num_qubits = 0
 
         self.max_degree = self.degree_constraints.get(self.n - 1, self.n - 1)        
         self.binary_bits = int(np.ceil(np.log2(self.max_degree+1)))        
@@ -663,7 +668,7 @@ class DCMST_QUBO:
 
         return mixer_circuit                                   
 
-    def solve_problem(self, optimizer, p=1):
+    def solve_problem(self, optimizer, p=1, parameters = None):
         # Convert the problem with constraints into an unconstrained QUBO
         converter = QuadraticProgramToQubo(penalty=self.P_I)
         qubo = converter.convert(self.qubo)
@@ -682,9 +687,11 @@ class DCMST_QUBO:
         # )        
 
         # Define a callback function to track progress
+        optimum_parameters = None
         def callback(eval_count, params, mean, std):
-            print(f"Eval count: {eval_count}, Parameters: {params}, Mean + offset: {mean + offset}, Std: {std}")
-
+            global optimum_parameters
+            print(f"Eval count: {eval_count}, Parameters: {params}, Mean + offset: {mean + offset}")
+            optimum_parameters = params
         # Set up QAOA with the callback
 
         np.random.seed(self.seed)
@@ -693,45 +700,171 @@ class DCMST_QUBO:
         algorithm_globals.random_seed = self.seed
 
         # Generate initial parameters using the seed
-        initial_params = np.random.uniform(0, 2 * np.pi, 2 * p)        
-        if (self.mixer is not None) and  (self.initial_state is not None):
-            if self.mixer == 'Warm':  
-                print(self.qubo.prettyprint())
-                qp = self.relax_problem(qubo)
-                print(qp.prettyprint())
-                sol = CplexOptimizer().solve(qp)
-                print(sol.prettyprint())  
-                c_stars = sol.samples[0].x
+        initial_params = np.random.uniform(0, 2 * np.pi, 2 * p) 
+        if not self.VQE:       
+            if (self.mixer is not None) and  (self.initial_state is not None):
+                if self.mixer == 'Warm':  
+                    print(self.qubo.prettyprint())
+                    qp = self.relax_problem(qubo)
+                    print(qp.prettyprint())
+                    sol = CplexOptimizer().solve(qp)
+                    print(sol.prettyprint())  
+                    c_stars = sol.samples[0].x
 
-                # Example usage:
-                thetas = [self.compute_theta(c_star) for c_star in c_stars] 
+                    # Example usage:
+                    thetas = [self.compute_theta(c_star) for c_star in c_stars] 
 
-                print(thetas)
+                    print(thetas)
 
-                self.mixer = self.mixer_warm(thetas)
-                self.initial_state = self.initial_state_RY(thetas)
-            elif self.mixer == 'LogicalX':
-                self.initial_state = self.initial_state_OHE()
-                self.mixer = self.mixer_customized()
+                    self.mixer = self.mixer_warm(thetas)
+                    self.initial_state = self.initial_state_RY(thetas)
+                elif self.mixer == 'LogicalX':
+                    self.initial_state = self.initial_state_OHE()
+                    self.mixer = self.mixer_customized()
+                
+                optimized_mixer = transpile(self.mixer, backend, optimization_level=3)
+
+                # optimized_mixer.draw(output="mpl").savefig("mixer_circuit_optimized_3.png")
+
+
+                qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, 
+                                mixer=optimized_mixer, initial_state=self.initial_state ,callback=callback)
+            else:
+                qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, callback=callback)
+                if self.warm_start:
+                    qaoa_mes = WarmStartQAOAOptimizer(
+                        pre_solver=CplexOptimizer(), relax_for_pre_solver=True, qaoa=qaoa_mes, epsilon=0.0, penalty=self.P_I
+                    )
+
+            if not self.warm_start:
+                qaoa = MinimumEigenOptimizer(qaoa_mes, penalty=self.P_I)
+            else:
+                qaoa = qaoa_mes
+        else:
+            from qiskit_aer.primitives import Estimator as AerEstimator
+            from qiskit import ClassicalRegister
+
+            estimator = AerEstimator()
+
+            # 1) Build the parameterized ansatz for VQE
+            from qiskit.circuit.library import TwoLocal
+
+            ansatz = TwoLocal(len(self.qubo.variables), rotation_blocks='ry', entanglement_blocks='cx', reps=p)
+            initial_parameters = np.random.random(ansatz.num_parameters)
+            # 2) Create the VQE solver
+            vqe = VQE(
+                estimator=estimator,
+                ansatz=ansatz,
+                optimizer=optimizer,
+                initial_point=initial_parameters,
+                callback=callback
+            )
+
+            # 3) Run VQE to compute minimum eigenvalue
+            start_time = time.time()
+            result = vqe.compute_minimum_eigenvalue(operator=qubo_ops)
+            end_time = time.time()
+
+            self.execution_time = end_time - start_time
+            print(f"VQE ground state energy (no offset): {result.eigenvalue.real:.5f}")
+            print(f"VQE ground state energy (with offset): {(result.eigenvalue + offset).real:.5f}")
+            print(f"Execution time: {self.execution_time:.4f} seconds")
+
+            # 4) Retrieve the optimal parameters
+            optimal_params = result.optimal_point
+            print("Optimal parameters:", optimal_params)
             
-            optimized_mixer = transpile(self.mixer, backend, optimization_level=3)
 
-            optimized_mixer.draw(output="mpl").savefig("mixer_circuit_optimized_3.png")
+            # 5) (Important) SAMPLE the final state to get bitstrings.
+            #
+            #    Because VQE only gives you an approximate wavefunction,
+            #    you must measure it to extract classical solutions.
+            # --------------------------------------------------------------
+            # a) Bind the parameters into the ansatz circuit
+            bound_ansatz = ansatz.assign_parameters(dict(zip(ansatz.parameters, optimal_params)))
+
+            # b) Add measurement
+            n_qubits = bound_ansatz.num_qubits
+            cr = ClassicalRegister(n_qubits, "measure")
+            bound_ansatz.add_register(cr)
+            bound_ansatz.measure(range(n_qubits), range(n_qubits))
+
+            # c) Run the circuit on your chosen backend for a number of shots
+            #    We'll re-use the same "sampler" or create a new Sampler. 
+            #    But we can do a direct simulation (AerSimulator) to get counts.
+            sampled_job = sampler.run(bound_ansatz, shots=1024)
+            sampled_res = sampled_job.result()
+            quasi_dist = sampled_res.quasi_dists[0]  # 0th circuit
+            # quasi_dist is something like {'000': 0.25, '001': 0.75, ...} in float probabilities
+
+            # Convert them to approximate “counts”:
+            shots = 1024
+            float_counts = quasi_dist.binary_probabilities()  
+            # e.g. {'000': 0.25, '001': 0.75} => means 25% in '000', 75% in '001'
+
+            counts = {state: int(round(prob * shots)) for state, prob in float_counts.items()}
+            # e.g. {'000': 256, '001': 768}
 
 
-            qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, 
-                            mixer=optimized_mixer, initial_state=self.initial_state ,callback=callback)
-        else:
-            qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, callback=callback)
-            if self.warm_start:
-                qaoa_mes = WarmStartQAOAOptimizer(
-                    pre_solver=CplexOptimizer(), relax_for_pre_solver=True, qaoa=qaoa_mes, epsilon=0.0, penalty=self.P_I
-                )
+            # 6) Convert measurement outcomes into QUBO variable assignments
+            def bitstring_to_assignment(bitstring, qubo_variables):
+                """
+                Convert a bitstring to an assignment dict based on QUBO variable names.
+                
+                Parameters:
+                - bitstring (str): The bitstring result from measurement (e.g., '0101').
+                - qubo_variables (list of str): The list of variable names in the QUBO.
+                
+                Returns:
+                - dict: A dictionary mapping QUBO variable names to their corresponding bit values.
+                """
+                assignment_dict = {}
+                num_bits = len(bitstring)
+                num_vars = len(qubo_variables)
+                
+                for i, var in enumerate(qubo_variables):
+                    # Qubit 0 is the rightmost bit in the bitstring
+                    bit_index = num_bits - 1 - i
+                    if bit_index < 0:
+                        # If the bitstring is shorter than the number of variables, assign 0
+                        assignment_dict[var] = 0
+                    else:
+                        assignment_dict[var] = int(bitstring[bit_index])
+                
+                return assignment_dict
 
-        if not self.warm_start:
-            qaoa = MinimumEigenOptimizer(qaoa_mes, penalty=self.P_I)
-        else:
-            qaoa = qaoa_mes
+            all_samples = []
+            for bitstring, freq in counts.items():
+                # Convert bitstring to assignment_dict
+                assignment_dict = bitstring_to_assignment(bitstring, self.qubo.variables)
+                
+                # Debugging: print the assignment
+                print(f"Bitstring: {bitstring}, Assignment: {assignment_dict}")
+
+                # Evaluate the original QUBO objective for each assignment
+                try:
+                    cost_val = self.qubo.objective.evaluate(assignment_dict)
+                except Exception as e:
+                    print(f"Error evaluating QUBO for assignment {assignment_dict}: {e}")
+                    continue
+
+                # Probability = freq / total_shots
+                probability = freq / shots
+
+                # Store the sample
+                sample_data = {
+                    "x": assignment_dict,
+                    "fval": cost_val,
+                    "probability": probability,
+                    "bitstring": bitstring
+                }
+                all_samples.append(sample_data)
+
+            # Sort samples by cost (ascending) if you want the “best” first
+            all_samples.sort(key=lambda x: x["fval"])
+
+            # 7) Return or store them
+            return all_samples
 
         start_time = time.time()
         qaoa_result = qaoa.solve(self.qubo)
@@ -744,11 +877,13 @@ class DCMST_QUBO:
 
         return qaoa_result.samples
 
+
+
     def print_number_of_qubits(self):
         """
         Calculate and print the number of qubits used in the problem.
         This is determined by the total number of binary variables in the QUBO.
         """
-        num_qubits = len(self.qubo.variables)
-        print(f"Number of qubits required: {num_qubits}")
+        self.num_qubits = len(self.qubo.variables)
+        print(f"Number of qubits required: {self.num_qubits}")
 

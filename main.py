@@ -46,17 +46,21 @@ def main():
     # So, we have to mantain those variables binary and relax all the others. 
 
     # With Warm-Starting
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
     
     # With LocicalX Mixer - This is not working yet
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
 
     # With mixer X - Standard formulation
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config)
+    # With mixer X - Standard formulation - using Metaheuristic 
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config,  Metaheuristic=True)
 
     # With mixer X - Standard formulation + redundant conditions
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, redundancy=True)
 
+    # With VQE and a specific circuit (the OHE state) 
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, VQE=True)
 
     qubo_problem.configure_variables()
     qubo_problem.define_objective_function()
@@ -68,7 +72,12 @@ def main():
     optimizer = COBYLA()
     p = 1  # QAOA circuit depth
 
+    # When metaheuristic = False, this function uses Cobyla as optimizer, solves the problem and returns the samples.
     samples = qubo_problem.solve_problem(optimizer, p)
+
+    # When metaheuristic = True, this function receives parameters and returns the cost/loss value.
+    # parameters = np.random.random(qubo_problem.num_qubits)
+    # samples = qubo_problem.solve_problem(optimizer, p, parameters=parameters)
 
     # This is just the test if the correct answers are the same as the most sampled.
     def format_qaoa_samples(samples, max_len: int = 10):
