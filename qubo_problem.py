@@ -2,7 +2,7 @@ from qiskit_optimization.problems import QuadraticProgram
 from qiskit_optimization.converters import QuadraticProgramToQubo
 from qiskit_ibm_runtime import QiskitRuntimeService
 from qiskit_optimization.algorithms import MinimumEigenOptimizer, CplexOptimizer
-from qiskit_algorithms import QAOA
+from qiskit_algorithms import QAOA, SamplingVQE
 from qiskit.primitives import Sampler
 from qiskit.primitives import BackendSampler    
 from qiskit_algorithms.utils import algorithm_globals
@@ -749,20 +749,31 @@ class DCMST_QUBO:
             # 1) Build the parameterized ansatz for VQE
             from qiskit.circuit.library import TwoLocal
 
-            ansatz = TwoLocal(len(self.qubo.variables), rotation_blocks='ry', entanglement_blocks='cx', reps=p)
+            ansatz = TwoLocal(len(self.qubo.variables), rotation_blocks='ry', entanglement_blocks='cx', entanglement='linear', reps=p)
             initial_parameters = np.random.random(ansatz.num_parameters)
             # 2) Create the VQE solver
-            vqe = VQE(
-                estimator=estimator,
+            # vqe = VQE(
+            #     estimator=estimator,
+            #     ansatz=ansatz,
+            #     optimizer=optimizer,
+            #     initial_point=initial_parameters,
+            #     callback=callback
+            # )
+
+            # # 3) Run VQE to compute minimum eigenvalue
+            # start_time = time.time()
+            # result = vqe.compute_minimum_eigenvalue(operator=qubo_ops)
+            # end_time = time.time()
+
+            sampling_vqe = SamplingVQE(
+                sampler=sampler,
                 ansatz=ansatz,
                 optimizer=optimizer,
-                initial_point=initial_parameters,
-                callback=callback
-            )
+                callback=callback  # if you have a callback function defined
+            )            
 
-            # 3) Run VQE to compute minimum eigenvalue
             start_time = time.time()
-            result = vqe.compute_minimum_eigenvalue(operator=qubo_ops)
+            result = sampling_vqe.compute_minimum_eigenvalue(operator=qubo_ops)
             end_time = time.time()
 
             self.execution_time = end_time - start_time
@@ -773,98 +784,22 @@ class DCMST_QUBO:
             # 4) Retrieve the optimal parameters
             optimal_params = result.optimal_point
             print("Optimal parameters:", optimal_params)
-            
 
-            # 5) (Important) SAMPLE the final state to get bitstrings.
-            #
-            #    Because VQE only gives you an approximate wavefunction,
-            #    you must measure it to extract classical solutions.
-            # --------------------------------------------------------------
-            # a) Bind the parameters into the ansatz circuit
-            bound_ansatz = ansatz.assign_parameters(dict(zip(ansatz.parameters, optimal_params)))
+            # Bind the optimal parameters to the ansatz
+            bound_ansatz = ansatz.assign_parameters(optimal_params)
 
-            # b) Add measurement
-            n_qubits = bound_ansatz.num_qubits
-            cr = ClassicalRegister(n_qubits, "measure")
-            bound_ansatz.add_register(cr)
-            bound_ansatz.measure(range(n_qubits), range(n_qubits))
+            # Sample the circuit using the sampler
+            sampled_result = sampler.run(bound_ansatz, shots=1024).result()
+            quasi_dist = sampled_result.quasi_dists[0]  # Assuming a single circuit
 
-            # c) Run the circuit on your chosen backend for a number of shots
-            #    We'll re-use the same "sampler" or create a new Sampler. 
-            #    But we can do a direct simulation (AerSimulator) to get counts.
-            sampled_job = sampler.run(bound_ansatz, shots=1024)
-            sampled_res = sampled_job.result()
-            quasi_dist = sampled_res.quasi_dists[0]  # 0th circuit
-            # quasi_dist is something like {'000': 0.25, '001': 0.75, ...} in float probabilities
-
-            # Convert them to approximate “counts”:
             shots = 1024
-            float_counts = quasi_dist.binary_probabilities()  
-            # e.g. {'000': 0.25, '001': 0.75} => means 25% in '000', 75% in '001'
-
+            float_counts = quasi_dist.binary_probabilities()
             counts = {state: int(round(prob * shots)) for state, prob in float_counts.items()}
-            # e.g. {'000': 256, '001': 768}
 
-
-            # 6) Convert measurement outcomes into QUBO variable assignments
-            def bitstring_to_assignment(bitstring, qubo_variables):
-                """
-                Convert a bitstring to an assignment dict based on QUBO variable names.
-                
-                Parameters:
-                - bitstring (str): The bitstring result from measurement (e.g., '0101').
-                - qubo_variables (list of str): The list of variable names in the QUBO.
-                
-                Returns:
-                - dict: A dictionary mapping QUBO variable names to their corresponding bit values.
-                """
-                assignment_dict = {}
-                num_bits = len(bitstring)
-                num_vars = len(qubo_variables)
-                
-                for i, var in enumerate(qubo_variables):
-                    # Qubit 0 is the rightmost bit in the bitstring
-                    bit_index = num_bits - 1 - i
-                    if bit_index < 0:
-                        # If the bitstring is shorter than the number of variables, assign 0
-                        assignment_dict[var] = 0
-                    else:
-                        assignment_dict[var] = int(bitstring[bit_index])
-                
-                return assignment_dict
-
-            all_samples = []
-            for bitstring, freq in counts.items():
-                # Convert bitstring to assignment_dict
-                assignment_dict = bitstring_to_assignment(bitstring, self.qubo.variables)
-                
-                # Debugging: print the assignment
-                print(f"Bitstring: {bitstring}, Assignment: {assignment_dict}")
-
-                # Evaluate the original QUBO objective for each assignment
-                try:
-                    cost_val = self.qubo.objective.evaluate(assignment_dict)
-                except Exception as e:
-                    print(f"Error evaluating QUBO for assignment {assignment_dict}: {e}")
-                    continue
-
-                # Probability = freq / total_shots
-                probability = freq / shots
-
-                # Store the sample
-                sample_data = {
-                    "x": assignment_dict,
-                    "fval": cost_val,
-                    "probability": probability,
-                    "bitstring": bitstring
-                }
-                all_samples.append(sample_data)
-
-            # Sort samples by cost (ascending) if you want the “best” first
-            all_samples.sort(key=lambda x: x["fval"])
 
             # 7) Return or store them
-            return all_samples
+            print(counts)
+            return counts
 
         start_time = time.time()
         qaoa_result = qaoa.solve(self.qubo)

@@ -14,7 +14,7 @@ def main():
     # Example usage:
     N = 4
     weight_range = (10, 100)
-    seed = 78 #60
+    seed = 78
     max_degree = 2 
 
     # Instantiate and create the graph
@@ -53,13 +53,14 @@ def main():
 
     # With mixer X - Standard formulation
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config)
+
     # With mixer X - Standard formulation - using Metaheuristic 
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config,  Metaheuristic=True)
 
     # With mixer X - Standard formulation + redundant conditions
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, redundancy=True)
 
-    # With VQE and a specific circuit (the OHE state) 
+    # With VQE 
     qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, VQE=True)
 
     qubo_problem.configure_variables()
@@ -91,12 +92,15 @@ def main():
 
         return [(_[0] + f": value: {_[1]:.3f}, probability: {1e2*_[2]:.1f}%") for _ in res]
 
-
-    print(format_qaoa_samples(samples))   
+    # this is just because the VQE=true returns a different object that cannot be formated as the output of qaoa
+    try:
+        print(format_qaoa_samples(samples))   
+    except:
+        pass
 
     # It seems to me that the best result considered by qiskit only takes into 
     # account the objective function and constraints, but not  penalties added directly to the QuadraticProgramm.
-    solution = qubo_problem.solution
+    # solution = qubo_problem.solution
 
     # Visualize the solution
 
@@ -110,7 +114,7 @@ def main():
     )    
 
     # Draw the most sampled
-    draw_solution(graph, solution)
+    # draw_solution(graph, solution)
 
 
 if __name__ == "__main__":

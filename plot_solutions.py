@@ -36,7 +36,7 @@ def interpret_solution(bitstring, adj_matrix, N, Delta):
         z_values: List of decoded z_v for each node v.
     """
 
-    # print(bitstring)
+    # print('AQUI ESTÁ A BITSTRING:', bitstring)
 
     # Initialize MST structures
     mst_edges = []
@@ -166,8 +166,14 @@ def sample_and_plot_histogram(samples, adj_matrix, N, Delta, interpret_solution_
     # Step 1: Interpret and validate solutions
     valid_solutions = []
     for bitstring in samples:
-        bit_array = "".join([str(int(_)) for _ in bitstring.x])
-        # bit_array = bit_array[::-1] 
+        try:
+            bit_array = "".join([str(int(_)) for _ in bitstring.x])
+            # bit_array = bit_array[::-1] 
+        except:
+            bit_array = "".join([str(int(_)) for _ in bitstring])
+            # We need to invert the solution just for vqe, because QAOA actually already returns the samples with the bitstrings in right order
+            bit_array = bit_array[::-1] 
+
         mst_solution = interpret_solution_fn(bit_array, adj_matrix, N, Delta)
         if mst_solution is not None:
             valid_solutions.append(tuple(sorted(mst_solution)))  # Normalize for comparison
