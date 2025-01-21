@@ -17,7 +17,9 @@ from qiskit.circuit.library import PauliEvolutionGate
 from qiskit import transpile
 from itertools import product
 from qiskit_aer.primitives import Estimator as AerEstimator
+from qiskit.circuit.library import PhaseGate
 from qiskit_algorithms import VQE
+from qiskit.circuit.library import StatePreparation
 import time
 import networkx as nx
 import numpy as np
@@ -471,8 +473,99 @@ class DCMST_QUBO:
         
         return qc
 
+    # def initial_state_OHE(self):  
+    #     init_qc = QuantumCircuit(len(self.qubo.variables))
+
+    #     idx = 0
+    #     self.group_e_v0 = []
+    #     group_e_uv = []
+    #     self.groups_e_uv = []
+    #     group_z_i = []
+    #     self.groups_z_i = []
+    #     self.group_x = []
+
+    #     # (e_uv = 1 and e_vu = 0) or (e_uv = 0 and e_vu = 1). So, the state |11> is forbidden
+    #     self.valid_e_uv_states = self.generate_states_excluding_specific(2, '11')
+    #     self.valid_z_i_states = self.generate_z_states()
+
+    #     for variable in self.qubo.variables:
+
+    #         if 'e_' + str(self.root) in variable.name: 
+    #             self.group_e_v0.append(idx)
+    #         elif 'e' in variable.name:
+    #             if idx not in group_e_uv:
+    #                 group_e_uv.append(idx)
+    #                 group_e_uv.append(idx+1)
+    #                 init_qc = self.prepare_superposition(init_qc, self.valid_e_uv_states, group_e_uv)
+    #                 self.groups_e_uv.append(group_e_uv)
+    #             else:
+    #                 group_e_uv = []
+
+    #         elif 'z' in variable.name:
+    #             if idx not in group_z_i:
+    #                 for i in range(self.binary_bits):
+    #                     group_z_i.append(idx+i)
+    #                 self.groups_z_i.append(group_z_i)
+    #                 init_qc = self.prepare_superposition(init_qc, self.valid_z_i_states, group_z_i)
+    #             else:
+    #                 group_z_i = []
+    #         elif 'x' in variable.name:
+    #             self.group_x.append(idx)
+
+    #         idx += 1
+
+    #     self._num_x = len(self.group_x)
+    #     self._num_e_v0 = len(self.group_e_v0)
+    #     # I will use this valid_x_states list, ['000000', '000001', ...], to prepare the initial state
+    #     self.valid_x_states = self.validate_topological_states(self._num_x)
+    #     init_qc = self.prepare_superposition(init_qc, self.valid_x_states, self.group_x)
+
+    #     # I'm not certain if this worth the cost
+    #     # valid_e_v0_states = self.generate_states_excluding_specific(self._num_e_v0, '0'*self._num_e_v0)
+    #     # self.prepare_superposition(init_qc, valid_e_v0_states, group_e_v0)
+    #     for id in self.group_e_v0:
+    #         init_qc.h(id)
+
+    #     # init_qc.draw(output="mpl", style="clifford") 
+    #     init_qc.draw(output="mpl").savefig("init_qc.png")
+
+    #     # print(init_qc)
+
+    #     # print('Até aqui eu fui. Encerrei a preparação do estado inicial.')
+
+    #     return init_qc
+
+    def prepare_superposition(self, qc, valid_states, qubit_indices):
+        """
+        Builds a *unitary* sub-circuit that has uniform amplitude over `valid_states`
+        on the specified qubit indices.
+        """
+        from qiskit.circuit.library import StatePreparation
+        
+        n_qubits = len(qubit_indices)
+        n_states = len(valid_states)
+
+        amplitude = 1 / np.sqrt(n_states)
+        state_vector = np.zeros(2**n_qubits, dtype=complex)
+
+        for st in valid_states:
+            idx = int(st, 2)
+            state_vector[idx] = amplitude
+
+        # StatePreparation is purely unitary; no resets involved
+        sp_circ = StatePreparation(state_vector)
+
+        qc.compose(sp_circ, qubit_indices, inplace=True)
+        return qc
+
+
     def initial_state_OHE(self):  
-        init_qc = QuantumCircuit(len(self.qubo.variables))
+        """
+        Builds a purely *unitary* circuit that places each logical group
+        (e_uv, z_v, x_uv, etc.) into a uniform superposition over valid states.
+        """
+        num_vars = len(self.qubo.variables)
+        init_qc = QuantumCircuit(num_vars)
 
         idx = 0
         self.group_e_v0 = []
@@ -482,18 +575,20 @@ class DCMST_QUBO:
         self.groups_z_i = []
         self.group_x = []
 
-        # (e_uv = 1 and e_vu = 0) or (e_uv = 0 and e_vu = 1). So, the state |11> is forbidden
-        self.valid_e_uv_states = self.generate_states_excluding_specific(2, '11')
-        self.valid_z_i_states = self.generate_z_states()
+        # Build the lists of valid states for each subset
+        self.valid_e_uv_states = self.generate_states_excluding_specific(2, '11')  # For e_uv
+        self.valid_z_i_states = self.generate_z_states()                          # For z_{v,i}
 
+        # Loop over each variable in the QUBO and group them
         for variable in self.qubo.variables:
-
             if 'e_' + str(self.root) in variable.name: 
                 self.group_e_v0.append(idx)
+
             elif 'e' in variable.name:
                 if idx not in group_e_uv:
                     group_e_uv.append(idx)
                     group_e_uv.append(idx+1)
+                    # Instead of `qc.initialize(...)`, we call:
                     init_qc = self.prepare_superposition(init_qc, self.valid_e_uv_states, group_e_uv)
                     self.groups_e_uv.append(group_e_uv)
                 else:
@@ -502,35 +597,28 @@ class DCMST_QUBO:
             elif 'z' in variable.name:
                 if idx not in group_z_i:
                     for i in range(self.binary_bits):
-                        group_z_i.append(idx+i)
+                        group_z_i.append(idx + i)
                     self.groups_z_i.append(group_z_i)
+                    # Uniform superposition of valid z-states
                     init_qc = self.prepare_superposition(init_qc, self.valid_z_i_states, group_z_i)
                 else:
                     group_z_i = []
+
             elif 'x' in variable.name:
                 self.group_x.append(idx)
 
             idx += 1
 
+        # For x-variables:
         self._num_x = len(self.group_x)
-        self._num_e_v0 = len(self.group_e_v0)
-        # I will use this valid_x_states list, ['000000', '000001', ...], to prepare the initial state
         self.valid_x_states = self.validate_topological_states(self._num_x)
         init_qc = self.prepare_superposition(init_qc, self.valid_x_states, self.group_x)
 
-        # I'm not certain if this worth the cost
-        # valid_e_v0_states = self.generate_states_excluding_specific(self._num_e_v0, '0'*self._num_e_v0)
-        # self.prepare_superposition(init_qc, valid_e_v0_states, group_e_v0)
-        for id in self.group_e_v0:
-            init_qc.h(id)
+        # Finally, for edges from root (group_e_v0), you originally did H gates
+        for id_qubit in self.group_e_v0:
+            init_qc.h(id_qubit)
 
-        # init_qc.draw(output="mpl", style="clifford") 
         init_qc.draw(output="mpl").savefig("init_qc.png")
-
-        # print(init_qc)
-
-        # print('Até aqui eu fui. Encerrei a preparação do estado inicial.')
-
         return init_qc
 
 
@@ -666,7 +754,46 @@ class DCMST_QUBO:
 
         # print('Terminei de montar o circuito do mixer.')
 
-        return mixer_circuit                                   
+        return mixer_circuit        
+
+    def grover_mixer(self, state_preparation):
+        """
+        Defines a Grover-like mixer circuit for QAOA.
+
+        Parameters:
+        - state_preparation: QuantumCircuit 
+            The U_S circuit for state preparation (e.g., uniform superposition over feasible states).
+
+        Returns:
+        - QuantumCircuit: Grover mixer circuit implementing
+        U_S^dagger * X^n * (Controlled-Phase) * X^n * U_S
+        """
+        # Create the circuit and define the QAOA mixer parameter
+        beta = Parameter("β")
+        num_qubits = len(self.qubo.variables)
+        qc = QuantumCircuit(num_qubits)
+
+        # 1) US^\dagger
+        qc.compose(state_preparation.inverse(), range(num_qubits), inplace=True)
+
+        # 2) X^n
+        qc.x(range(num_qubits))
+
+        # 3) Multi-controlled phase gate (PhaseGate with n-1 controls if num_qubits > 1)
+        if num_qubits == 1:
+            phase_gate = PhaseGate(-beta)
+        else:
+            phase_gate = PhaseGate(-beta).control(num_qubits - 1)
+        qc.append(phase_gate, qc.qubits)
+
+        # 4) X^n
+        qc.x(range(num_qubits))
+
+        # 5) US
+        qc.compose(state_preparation, range(num_qubits), inplace=True)
+
+        return qc
+
 
     def solve_problem(self, optimizer, p=1, parameters = None):
         # Convert the problem with constraints into an unconstrained QUBO
@@ -721,7 +848,11 @@ class DCMST_QUBO:
                 elif self.mixer == 'LogicalX':
                     self.initial_state = self.initial_state_OHE()
                     self.mixer = self.mixer_customized()
-                
+                elif self.mixer == 'Grover':
+                    self.initial_state = self.initial_state_OHE()
+                    # unitary_qc = self.initial_state.decompose() 
+                    self.mixer = self.grover_mixer(self.initial_state)
+
                 optimized_mixer = transpile(self.mixer, backend, optimization_level=3)
 
                 # optimized_mixer.draw(output="mpl").savefig("mixer_circuit_optimized_3.png")
@@ -751,19 +882,6 @@ class DCMST_QUBO:
 
             ansatz = TwoLocal(len(self.qubo.variables), rotation_blocks='ry', entanglement_blocks='cx', entanglement='linear', reps=p)
             initial_parameters = np.random.random(ansatz.num_parameters)
-            # 2) Create the VQE solver
-            # vqe = VQE(
-            #     estimator=estimator,
-            #     ansatz=ansatz,
-            #     optimizer=optimizer,
-            #     initial_point=initial_parameters,
-            #     callback=callback
-            # )
-
-            # # 3) Run VQE to compute minimum eigenvalue
-            # start_time = time.time()
-            # result = vqe.compute_minimum_eigenvalue(operator=qubo_ops)
-            # end_time = time.time()
 
             sampling_vqe = SamplingVQE(
                 sampler=sampler,

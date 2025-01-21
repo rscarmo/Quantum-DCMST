@@ -60,8 +60,11 @@ def main():
     # With mixer X - Standard formulation + redundant conditions
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, redundancy=True)
 
+    # With mixer Grover - initial_state = 'OHE'
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Grover', initial_state='OHE')    
+
     # With VQE 
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, VQE=True)
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, VQE=True)
 
     qubo_problem.configure_variables()
     qubo_problem.define_objective_function()
