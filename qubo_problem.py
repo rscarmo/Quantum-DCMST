@@ -22,6 +22,8 @@ from qiskit_algorithms import VQE
 from qiskit.circuit.library import StatePreparation
 from qiskit.synthesis.evolution import LieTrotter
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+from qiskit_aer import QasmSimulator
+from qiskit.quantum_info import Pauli
 
 
 import time
@@ -36,7 +38,8 @@ import sys
 
 class DCMST_QUBO:
     def __init__(self, G, degree_constraints, config, root=0, mixer = None, initial_state = None,  
-                 regularization = 0, seed = 42, warm_start = False, redundancy = False, VQE = False, Metaheuristic =False):
+                 regularization = 0, seed = 42, warm_start = False, redundancy = False, VQE = False, 
+                 Metaheuristic =False):
         """
         Initialize the QUBO for the Degree-Constrained Minimum Spanning Tree problem.
 
@@ -60,6 +63,7 @@ class DCMST_QUBO:
         self.redundancy = redundancy
         self.Metaheuristic = Metaheuristic
         self.num_qubits = 0
+        self.var_names = None
 
         self.max_degree = self.degree_constraints.get(self.n - 1, self.n - 1)        
         self.binary_bits = int(np.ceil(np.log2(self.max_degree+1)))        
@@ -96,6 +100,8 @@ class DCMST_QUBO:
             for i in range(self.binary_bits):
                 var_name_z = f'z_{v}_{i}'
                 self.qubo.binary_var(name=var_name_z)
+
+        self.var_names = self.qubo.variables
 
     def define_objective_function(self):
         """Define the objective function including penalties."""
@@ -289,6 +295,7 @@ class DCMST_QUBO:
         if self.config.SIMULATION == "True":
             print("Proceeding with simulation...")
             backend = AerSimulator()
+            # backend = QasmSimulator()
             backend.set_options(seed_simulator=self.seed)
         else:
             print("Proceeding with IBM Quantum hardware...")
@@ -490,7 +497,7 @@ class DCMST_QUBO:
 
         # (e_uv = 1 and e_vu = 0) or (e_uv = 0 and e_vu = 1). So, the state |11> is forbidden
         self.valid_e_uv_states = self.generate_states_excluding_specific(2, '11')
-        self.valid_z_i_states = self.generate_z_states()
+        # self.valid_z_i_states = self.generate_z_states()
 
         for variable in self.qubo.variables:
 
@@ -510,7 +517,7 @@ class DCMST_QUBO:
                     for i in range(self.binary_bits):
                         group_z_i.append(idx+i)
                     self.groups_z_i.append(group_z_i)
-                    init_qc = self.prepare_superposition(init_qc, self.valid_z_i_states, group_z_i)
+                    # init_qc = self.prepare_superposition(init_qc, self.valid_z_i_states, group_z_i)
                 else:
                     group_z_i = []
             elif 'x' in variable.name:
@@ -530,111 +537,68 @@ class DCMST_QUBO:
         for id in self.group_e_v0:
             init_qc.h(id)
 
+        for ids in self.groups_z_i:
+            for id in ids:
+                init_qc.h(id)            
+
         # init_qc.draw(output="mpl", style="clifford") 
         init_qc.draw(output="mpl").savefig("init_qc.png")
-
-        # print(init_qc)
-
-        # print('Até aqui eu fui. Encerrei a preparação do estado inicial.')
 
         return init_qc
 
 
-    # def mixer_LogicalX(self, hamiltonian, qubit_indices, beta, circuit):
-    #     """
-    #     Implementa um mixer no Qiskit baseado no Hamiltoniano fornecido com trotterização otimizada.
-
-    #     Args:
-    #         hamiltonian (list of tuples): Lista de termos do Hamiltoniano.
-    #                                     Cada termo é (pauli_string, restrições),
-    #                                     onde restrições é uma lista de (pauli_string, coeficiente).
-    #         qubit_indices (list of int): Índices dos qubits sobre os quais o mixer deve atuar.
-    #         beta (float): Parâmetro do QAOA associado ao mixer.
-    #         circuit (QuantumCircuit): Circuito utilizado para preparar o mixer.
-
-    #     Returns:
-    #         QuantumCircuit: Circuito implementando o mixer.
-    #     """
-    #     # Verificar consistência dos índices de qubits
-    #     num_qubits = len(qubit_indices)
-
-    #     # Para cada termo no Hamiltoniano
-    #     for main_pauli_string, constraints in hamiltonian:
-    #         for constraint_pauli_string, coef in constraints:
-    #             # Combinar o termo principal com a restrição
-    #             combined_pauli_string = ''.join(
-    #                 main_pauli_string[i] if main_pauli_string[i] != 'I' else constraint_pauli_string[i]
-    #                 for i in range(len(main_pauli_string))
-    #             )
-
-    #             # Mapear operadores para os qubits
-    #             assert len(combined_pauli_string) == num_qubits, "O tamanho da string de Pauli deve corresponder ao número de qubits."
-
-    #             # Verificar se o termo pode ser implementado diretamente com RX
-    #             if all(op in {'X', 'I'} for op in combined_pauli_string):
-    #                 for i, op in enumerate(combined_pauli_string):
-    #                     if op == 'X':
-    #                         circuit.rx(-2 * beta * coef, qubit_indices[i])  # Aplicar RX diretamente
-    #             else:
-    #                 # Termos mais complexos: usar CNOTs, Hadamards e RZ
-    #                 involved_qubits = []
-    #                 for i, op in enumerate(combined_pauli_string):
-    #                     if op == 'X':
-    #                         circuit.h(qubit_indices[i])
-    #                         involved_qubits.append(qubit_indices[i])
-    #                     elif op == 'Z':
-    #                         involved_qubits.append(qubit_indices[i])
-    #                     elif op == 'I':
-    #                         continue
-
-    #                 # Aplicar controle para os qubits envolvidos
-    #                 if len(involved_qubits) > 1:
-    #                     # Aplicar CNOTs para criar a cadeia de controles
-    #                     for i in range(len(involved_qubits) - 1):
-    #                         circuit.cx(involved_qubits[i], involved_qubits[i + 1])
-
-    #                 # Aplicar a rotação parametrizada no último qubit da cadeia
-    #                 rotation_qubit = involved_qubits[-1]
-    #                 circuit.rz(-2 * beta * coef, rotation_qubit)
-
-    #                 # Reverter os CNOTs
-    #                 if len(involved_qubits) > 1:
-    #                     for i in reversed(range(len(involved_qubits) - 1)):
-    #                         circuit.cx(involved_qubits[i], involved_qubits[i + 1])
-
-    #                 # Reverter Hadamard gates
-    #                 for i, op in enumerate(combined_pauli_string):
-    #                     if op == 'X':
-    #                         circuit.h(qubit_indices[i])
-
-    #     return circuit
-
     def mixer_LogicalX(self, hamiltonian, qubit_indices, beta, circuit):
-        backend = self.configure_backend()
+        """
+        Constructs and appends the PauliEvolutionGate for the mixer Hamiltonian.
 
-        num_qubits = len(qubit_indices)
-        ancilla_cicuit = QuantumCircuit(num_qubits)
+        Args:
+            hamiltonian (list of tuples): Each tuple contains a main Pauli string and a list of constraint tuples.
+                                          Example: [('IX', [('ZI', 1.0), ('II', 0.0)]), ('XI', [('IZ', 1.0), ('II', 0.0)])]
+            qubit_indices (list of int): Qubit indices the Pauli strings act upon.
+            beta (float): Parameter for the mixer.
+            circuit (QuantumCircuit): The quantum circuit to append the mixer to.
 
-        sp_op_total = SparsePauliOp.from_list([('I' * num_qubits, 0.0)])
+        Returns:
+            QuantumCircuit: The updated circuit with the mixer appended.
+        """
 
-        for main_pauli_string, constraints in hamiltonian:
-            for constraint_pauli_string, coef in constraints:
-                combined_pauli_string = ''.join(
-                    main_pauli_string[i] if main_pauli_string[i] != 'I'
-                    else constraint_pauli_string[i]
-                    for i in range(num_qubits)
-                )
-                sp_op_term = SparsePauliOp.from_list([(combined_pauli_string, coef)])
-                sp_op_total = sp_op_total + sp_op_term
+        # Initialize lists for Pauli strings and coefficients
+        pauli_strings = []
+        coefficients = []
 
-        # Use LieTrotter instead of SuzukiTrotter
-        trotter = LieTrotter()
+        for main_pauli_str, constraints in hamiltonian:
+            main_pauli = Pauli(main_pauli_str)
+            for constraint_pauli_str, coef in constraints:
+                constraint_pauli = Pauli(constraint_pauli_str)
+                # Compute the product Pauli and phase
+                combined_pauli = main_pauli.dot(constraint_pauli)
+                # Convert Pauli object back to string
+                combined_pauli_str = combined_pauli.to_label()
+                # Multiply coefficient by the phase
+                # phase is a complex number: 1, -1, 1j, -1j
+                adjusted_coef = coef
+                # If the coefficient is zero or Pauli is all 'I's, skip
+                if adjusted_coef == 0.0 or combined_pauli_str == 'II':
+                    continue  # Avoid adding 'II' to the Hamiltonian
+
+                pauli_strings.append(combined_pauli_str)
+                coefficients.append(adjusted_coef.real)  # Use the real part
+
+        # Create SparsePauliOp with the list
+        sp_op_total = SparsePauliOp.from_list(list(zip(pauli_strings, coefficients)))
+
+        # Verify the constructed Hamiltonian
+        print("Constructed Mixer Hamiltonian:")
+        print(sp_op_total)
+
+        # Create Pauli Evolution Gate using LieTrotter decomposition
+        trotter = LieTrotter(reps=1)
         evolution_gate = PauliEvolutionGate(sp_op_total, time=beta, synthesis=trotter)
 
+        # Append the gate to the circuit acting on qubit_indices
         circuit.append(evolution_gate, qubit_indices)
 
         return circuit
-
 
     def mixer_customized(self):
         mixer_circuit = QuantumCircuit(len(self.qubo.variables))
@@ -663,32 +627,35 @@ class DCMST_QUBO:
         # For the x_uv
         # Needs to search in the hamiltonian_mixers.cvs using the valid_states
         filtered_row = df[df['states'] == str(self.valid_x_states)]
-        
-        if not filtered_row.empty:  # Verificar se encontrou o estado
-            hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
-            print(hamiltonian, self.group_x)
-            
-            # Chamar a função mixer_LogicalX com os dados encontrados
-            mixer_circuit = self.mixer_LogicalX(hamiltonian, self.group_x, beta, mixer_circuit)
-
+        if len(self.group_x) == 1:
+            mixer_circuit.rx(-2*beta, self.group_x)
         else:
-            print(f"Estado {self.valid_x_states} referente às variaveis x_uv não encontrado no arquivo CSV.")
-            sys.exit()        
+            if not filtered_row.empty:  # Verificar se encontrou o estado
+                hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
+                print(hamiltonian, self.group_x)
+                
+                # Chamar a função mixer_LogicalX com os dados encontrados
+                mixer_circuit = self.mixer_LogicalX(hamiltonian, self.group_x, beta, mixer_circuit)
+
+            else:
+                print(f"Estado {self.valid_x_states} referente às variaveis x_uv não encontrado no arquivo CSV.")
+                sys.exit()        
 
         # For the z_vi
         # Needs to search in the hamiltonian_mixers.cvs using the valid_states
         for ids in self.groups_z_i:
-            filtered_row = df[df['states'] == str(self.valid_z_i_states)]
-            
-            if not filtered_row.empty:  # Verificar se encontrou o estado
-                hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
-                print(hamiltonian, ids)
+            mixer_circuit.rx(-2*beta, ids)
+            # filtered_row = df[df['states'] == str(self.valid_z_i_states)]
+            # print('AQUI ESTÃO OS ESTADOS VÁLIDOS DE Z:', self.valid_z_i_states)
+            # if not filtered_row.empty:  # Verificar se encontrou o estado
+            #     hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
+            #     print(hamiltonian, ids)
                 
-                # Chamar a função mixer_LogicalX com os dados encontrados
-                mixer_circuit = self.mixer_LogicalX(hamiltonian, ids, beta, mixer_circuit)
-            else:
-                print(f"Estado {self.valid_x_states} referente às variaveis z_vi não encontrado no arquivo CSV.")
-                sys.exit()  
+            #     # Chamar a função mixer_LogicalX com os dados encontrados
+            #     mixer_circuit = self.mixer_LogicalX(hamiltonian, ids, beta, mixer_circuit)
+            # else:
+            #     print(f"Estado {self.valid_x_states} referente às variaveis z_vi não encontrado no arquivo CSV.")
+            #     sys.exit()  
 
         return mixer_circuit        
 
@@ -747,10 +714,11 @@ class DCMST_QUBO:
                     self.initial_state = self.initial_state_OHE()
                     self.mixer = self.mixer_customized()
 
+                self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
 
                 optimized_mixer = transpile(self.mixer, backend, optimization_level=3)
 
-                optimized_mixer.draw(output="mpl").savefig("mixer_circuit.png")
+                optimized_mixer.draw(output="mpl").savefig("mixer_circuit_optimized.png")
 
                 # Create a custom pass manager
                 # pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
