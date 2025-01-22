@@ -1,0 +1,34 @@
+
+name: "experimento_2" # nome do experimento
+nr_runs: 10 # número de execuções
+
+optimizer: 
+  name: "PSO" # nome do otimizador.
+  n_iterations: 1000 # número de iterações
+
+
+# configurações do espaço de busca
+search-space:
+  n_agents: 20 # número de agentes
+  n_variables: 2 # dimensão do espaço de busca
+  lower_bound: [-10, -10] # limites inferiores do espaço de busca
+  upper_bound: [10, 10] # limites superiores do espaço de busca
+
+# Parâmetros do otimizador pso 
+PSO:
+  w: 0.7
+  c1: 1.7
+  c2: 1.7
+
+# Parâmetros do otimizador de
+DE:
+  CR: 0.9
+  F: 0.7
+
+# Parâmetros do otimizador gsm
+GSM:
+  G: 2.467
+
+# Vc pode adicionar mais parâmetros aqui.
+
+
