@@ -20,6 +20,10 @@ from qiskit_aer.primitives import Estimator as AerEstimator
 from qiskit.circuit.library import PhaseGate
 from qiskit_algorithms import VQE
 from qiskit.circuit.library import StatePreparation
+from qiskit.synthesis.evolution import LieTrotter
+from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+
+
 import time
 import networkx as nx
 import numpy as np
@@ -473,99 +477,8 @@ class DCMST_QUBO:
         
         return qc
 
-    # def initial_state_OHE(self):  
-    #     init_qc = QuantumCircuit(len(self.qubo.variables))
-
-    #     idx = 0
-    #     self.group_e_v0 = []
-    #     group_e_uv = []
-    #     self.groups_e_uv = []
-    #     group_z_i = []
-    #     self.groups_z_i = []
-    #     self.group_x = []
-
-    #     # (e_uv = 1 and e_vu = 0) or (e_uv = 0 and e_vu = 1). So, the state |11> is forbidden
-    #     self.valid_e_uv_states = self.generate_states_excluding_specific(2, '11')
-    #     self.valid_z_i_states = self.generate_z_states()
-
-    #     for variable in self.qubo.variables:
-
-    #         if 'e_' + str(self.root) in variable.name: 
-    #             self.group_e_v0.append(idx)
-    #         elif 'e' in variable.name:
-    #             if idx not in group_e_uv:
-    #                 group_e_uv.append(idx)
-    #                 group_e_uv.append(idx+1)
-    #                 init_qc = self.prepare_superposition(init_qc, self.valid_e_uv_states, group_e_uv)
-    #                 self.groups_e_uv.append(group_e_uv)
-    #             else:
-    #                 group_e_uv = []
-
-    #         elif 'z' in variable.name:
-    #             if idx not in group_z_i:
-    #                 for i in range(self.binary_bits):
-    #                     group_z_i.append(idx+i)
-    #                 self.groups_z_i.append(group_z_i)
-    #                 init_qc = self.prepare_superposition(init_qc, self.valid_z_i_states, group_z_i)
-    #             else:
-    #                 group_z_i = []
-    #         elif 'x' in variable.name:
-    #             self.group_x.append(idx)
-
-    #         idx += 1
-
-    #     self._num_x = len(self.group_x)
-    #     self._num_e_v0 = len(self.group_e_v0)
-    #     # I will use this valid_x_states list, ['000000', '000001', ...], to prepare the initial state
-    #     self.valid_x_states = self.validate_topological_states(self._num_x)
-    #     init_qc = self.prepare_superposition(init_qc, self.valid_x_states, self.group_x)
-
-    #     # I'm not certain if this worth the cost
-    #     # valid_e_v0_states = self.generate_states_excluding_specific(self._num_e_v0, '0'*self._num_e_v0)
-    #     # self.prepare_superposition(init_qc, valid_e_v0_states, group_e_v0)
-    #     for id in self.group_e_v0:
-    #         init_qc.h(id)
-
-    #     # init_qc.draw(output="mpl", style="clifford") 
-    #     init_qc.draw(output="mpl").savefig("init_qc.png")
-
-    #     # print(init_qc)
-
-    #     # print('Até aqui eu fui. Encerrei a preparação do estado inicial.')
-
-    #     return init_qc
-
-    def prepare_superposition(self, qc, valid_states, qubit_indices):
-        """
-        Builds a *unitary* sub-circuit that has uniform amplitude over `valid_states`
-        on the specified qubit indices.
-        """
-        from qiskit.circuit.library import StatePreparation
-        
-        n_qubits = len(qubit_indices)
-        n_states = len(valid_states)
-
-        amplitude = 1 / np.sqrt(n_states)
-        state_vector = np.zeros(2**n_qubits, dtype=complex)
-
-        for st in valid_states:
-            idx = int(st, 2)
-            state_vector[idx] = amplitude
-
-        # StatePreparation is purely unitary; no resets involved
-        sp_circ = StatePreparation(state_vector)
-
-        qc.compose(sp_circ, qubit_indices, inplace=True)
-        return qc
-
-
     def initial_state_OHE(self):  
-        """
-        Builds a purely *unitary* circuit that places each logical group
-        (e_uv, z_v, x_uv, etc.) into a uniform superposition over valid states.
-        """
-        num_vars = len(self.qubo.variables)
-        init_qc = QuantumCircuit(num_vars)
+        init_qc = QuantumCircuit(len(self.qubo.variables))
 
         idx = 0
         self.group_e_v0 = []
@@ -575,20 +488,18 @@ class DCMST_QUBO:
         self.groups_z_i = []
         self.group_x = []
 
-        # Build the lists of valid states for each subset
-        self.valid_e_uv_states = self.generate_states_excluding_specific(2, '11')  # For e_uv
-        self.valid_z_i_states = self.generate_z_states()                          # For z_{v,i}
+        # (e_uv = 1 and e_vu = 0) or (e_uv = 0 and e_vu = 1). So, the state |11> is forbidden
+        self.valid_e_uv_states = self.generate_states_excluding_specific(2, '11')
+        self.valid_z_i_states = self.generate_z_states()
 
-        # Loop over each variable in the QUBO and group them
         for variable in self.qubo.variables:
+
             if 'e_' + str(self.root) in variable.name: 
                 self.group_e_v0.append(idx)
-
             elif 'e' in variable.name:
                 if idx not in group_e_uv:
                     group_e_uv.append(idx)
                     group_e_uv.append(idx+1)
-                    # Instead of `qc.initialize(...)`, we call:
                     init_qc = self.prepare_superposition(init_qc, self.valid_e_uv_states, group_e_uv)
                     self.groups_e_uv.append(group_e_uv)
                 else:
@@ -597,97 +508,130 @@ class DCMST_QUBO:
             elif 'z' in variable.name:
                 if idx not in group_z_i:
                     for i in range(self.binary_bits):
-                        group_z_i.append(idx + i)
+                        group_z_i.append(idx+i)
                     self.groups_z_i.append(group_z_i)
-                    # Uniform superposition of valid z-states
                     init_qc = self.prepare_superposition(init_qc, self.valid_z_i_states, group_z_i)
                 else:
                     group_z_i = []
-
             elif 'x' in variable.name:
                 self.group_x.append(idx)
 
             idx += 1
 
-        # For x-variables:
         self._num_x = len(self.group_x)
+        self._num_e_v0 = len(self.group_e_v0)
+        # I will use this valid_x_states list, ['000000', '000001', ...], to prepare the initial state
         self.valid_x_states = self.validate_topological_states(self._num_x)
         init_qc = self.prepare_superposition(init_qc, self.valid_x_states, self.group_x)
 
-        # Finally, for edges from root (group_e_v0), you originally did H gates
-        for id_qubit in self.group_e_v0:
-            init_qc.h(id_qubit)
+        # I'm not certain if this worth the cost
+        # valid_e_v0_states = self.generate_states_excluding_specific(self._num_e_v0, '0'*self._num_e_v0)
+        # self.prepare_superposition(init_qc, valid_e_v0_states, group_e_v0)
+        for id in self.group_e_v0:
+            init_qc.h(id)
 
+        # init_qc.draw(output="mpl", style="clifford") 
         init_qc.draw(output="mpl").savefig("init_qc.png")
+
+        # print(init_qc)
+
+        # print('Até aqui eu fui. Encerrei a preparação do estado inicial.')
+
         return init_qc
 
 
+    # def mixer_LogicalX(self, hamiltonian, qubit_indices, beta, circuit):
+    #     """
+    #     Implementa um mixer no Qiskit baseado no Hamiltoniano fornecido com trotterização otimizada.
+
+    #     Args:
+    #         hamiltonian (list of tuples): Lista de termos do Hamiltoniano.
+    #                                     Cada termo é (pauli_string, restrições),
+    #                                     onde restrições é uma lista de (pauli_string, coeficiente).
+    #         qubit_indices (list of int): Índices dos qubits sobre os quais o mixer deve atuar.
+    #         beta (float): Parâmetro do QAOA associado ao mixer.
+    #         circuit (QuantumCircuit): Circuito utilizado para preparar o mixer.
+
+    #     Returns:
+    #         QuantumCircuit: Circuito implementando o mixer.
+    #     """
+    #     # Verificar consistência dos índices de qubits
+    #     num_qubits = len(qubit_indices)
+
+    #     # Para cada termo no Hamiltoniano
+    #     for main_pauli_string, constraints in hamiltonian:
+    #         for constraint_pauli_string, coef in constraints:
+    #             # Combinar o termo principal com a restrição
+    #             combined_pauli_string = ''.join(
+    #                 main_pauli_string[i] if main_pauli_string[i] != 'I' else constraint_pauli_string[i]
+    #                 for i in range(len(main_pauli_string))
+    #             )
+
+    #             # Mapear operadores para os qubits
+    #             assert len(combined_pauli_string) == num_qubits, "O tamanho da string de Pauli deve corresponder ao número de qubits."
+
+    #             # Verificar se o termo pode ser implementado diretamente com RX
+    #             if all(op in {'X', 'I'} for op in combined_pauli_string):
+    #                 for i, op in enumerate(combined_pauli_string):
+    #                     if op == 'X':
+    #                         circuit.rx(-2 * beta * coef, qubit_indices[i])  # Aplicar RX diretamente
+    #             else:
+    #                 # Termos mais complexos: usar CNOTs, Hadamards e RZ
+    #                 involved_qubits = []
+    #                 for i, op in enumerate(combined_pauli_string):
+    #                     if op == 'X':
+    #                         circuit.h(qubit_indices[i])
+    #                         involved_qubits.append(qubit_indices[i])
+    #                     elif op == 'Z':
+    #                         involved_qubits.append(qubit_indices[i])
+    #                     elif op == 'I':
+    #                         continue
+
+    #                 # Aplicar controle para os qubits envolvidos
+    #                 if len(involved_qubits) > 1:
+    #                     # Aplicar CNOTs para criar a cadeia de controles
+    #                     for i in range(len(involved_qubits) - 1):
+    #                         circuit.cx(involved_qubits[i], involved_qubits[i + 1])
+
+    #                 # Aplicar a rotação parametrizada no último qubit da cadeia
+    #                 rotation_qubit = involved_qubits[-1]
+    #                 circuit.rz(-2 * beta * coef, rotation_qubit)
+
+    #                 # Reverter os CNOTs
+    #                 if len(involved_qubits) > 1:
+    #                     for i in reversed(range(len(involved_qubits) - 1)):
+    #                         circuit.cx(involved_qubits[i], involved_qubits[i + 1])
+
+    #                 # Reverter Hadamard gates
+    #                 for i, op in enumerate(combined_pauli_string):
+    #                     if op == 'X':
+    #                         circuit.h(qubit_indices[i])
+
+    #     return circuit
+
     def mixer_LogicalX(self, hamiltonian, qubit_indices, beta, circuit):
-        """
-        Implementa um mixer no Qiskit baseado no Hamiltoniano fornecido com trotterização otimizada.
+        backend = self.configure_backend()
 
-        Args:
-            hamiltonian (list of tuples): Lista de termos do Hamiltoniano.
-                                        Cada termo é (pauli_string, restrições),
-                                        onde restrições é uma lista de (pauli_string, coeficiente).
-            qubit_indices (list of int): Índices dos qubits sobre os quais o mixer deve atuar.
-            beta (float): Parâmetro do QAOA associado ao mixer.
-            circuit (QuantumCircuit): Circuito utilizado para preparar o mixer.
-
-        Returns:
-            QuantumCircuit: Circuito implementando o mixer.
-        """
-        # Verificar consistência dos índices de qubits
         num_qubits = len(qubit_indices)
+        ancilla_cicuit = QuantumCircuit(num_qubits)
 
-        # Para cada termo no Hamiltoniano
+        sp_op_total = SparsePauliOp.from_list([('I' * num_qubits, 0.0)])
+
         for main_pauli_string, constraints in hamiltonian:
             for constraint_pauli_string, coef in constraints:
-                # Combinar o termo principal com a restrição
                 combined_pauli_string = ''.join(
-                    main_pauli_string[i] if main_pauli_string[i] != 'I' else constraint_pauli_string[i]
-                    for i in range(len(main_pauli_string))
+                    main_pauli_string[i] if main_pauli_string[i] != 'I'
+                    else constraint_pauli_string[i]
+                    for i in range(num_qubits)
                 )
+                sp_op_term = SparsePauliOp.from_list([(combined_pauli_string, coef)])
+                sp_op_total = sp_op_total + sp_op_term
 
-                # Mapear operadores para os qubits
-                assert len(combined_pauli_string) == num_qubits, "O tamanho da string de Pauli deve corresponder ao número de qubits."
+        # Use LieTrotter instead of SuzukiTrotter
+        trotter = LieTrotter()
+        evolution_gate = PauliEvolutionGate(sp_op_total, time=beta, synthesis=trotter)
 
-                # Verificar se o termo pode ser implementado diretamente com RX
-                if all(op in {'X', 'I'} for op in combined_pauli_string):
-                    for i, op in enumerate(combined_pauli_string):
-                        if op == 'X':
-                            circuit.rx(-2 * beta * coef, qubit_indices[i])  # Aplicar RX diretamente
-                else:
-                    # Termos mais complexos: usar CNOTs, Hadamards e RZ
-                    involved_qubits = []
-                    for i, op in enumerate(combined_pauli_string):
-                        if op == 'X':
-                            circuit.h(qubit_indices[i])
-                            involved_qubits.append(qubit_indices[i])
-                        elif op == 'Z':
-                            involved_qubits.append(qubit_indices[i])
-                        elif op == 'I':
-                            continue
-
-                    # Aplicar controle para os qubits envolvidos
-                    if len(involved_qubits) > 1:
-                        # Aplicar CNOTs para criar a cadeia de controles
-                        for i in range(len(involved_qubits) - 1):
-                            circuit.cx(involved_qubits[i], involved_qubits[i + 1])
-
-                    # Aplicar a rotação parametrizada no último qubit da cadeia
-                    rotation_qubit = involved_qubits[-1]
-                    circuit.rz(-2 * beta * coef, rotation_qubit)
-
-                    # Reverter os CNOTs
-                    if len(involved_qubits) > 1:
-                        for i in reversed(range(len(involved_qubits) - 1)):
-                            circuit.cx(involved_qubits[i], involved_qubits[i + 1])
-
-                    # Reverter Hadamard gates
-                    for i, op in enumerate(combined_pauli_string):
-                        if op == 'X':
-                            circuit.h(qubit_indices[i])
+        circuit.append(evolution_gate, qubit_indices)
 
         return circuit
 
@@ -711,6 +655,7 @@ class DCMST_QUBO:
                 hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  
                 print(hamiltonian, ids)
                 mixer_circuit = self.mixer_LogicalX(hamiltonian, ids, beta, mixer_circuit)
+
             else:
                 print(f"Estado {self.valid_e_uv_states} referente às variaveis e_uv não encontrado no arquivo CSV.")
                 sys.exit()
@@ -725,6 +670,7 @@ class DCMST_QUBO:
             
             # Chamar a função mixer_LogicalX com os dados encontrados
             mixer_circuit = self.mixer_LogicalX(hamiltonian, self.group_x, beta, mixer_circuit)
+
         else:
             print(f"Estado {self.valid_x_states} referente às variaveis x_uv não encontrado no arquivo CSV.")
             sys.exit()        
@@ -743,56 +689,8 @@ class DCMST_QUBO:
             else:
                 print(f"Estado {self.valid_x_states} referente às variaveis z_vi não encontrado no arquivo CSV.")
                 sys.exit()  
-        # hamiltonian = SparsePauliOp.from_list([('IIX', 1), ('IZX', 1), ('IXZ', 1),
-        #                                ('IXI', 1), ('XII', 1)])
-        # op = PauliEvolutionGate(hamiltonian, time=beta)
-        # mixer_circuit.append(op, [10,11,12])
-        # print(mixer_circuit)
-
-        mixer_circuit.draw(output="mpl").savefig("mixer_circuit.png")
-        # mixer_circuit.draw(output="mpl", style="clifford") 
-
-        # print('Terminei de montar o circuito do mixer.')
 
         return mixer_circuit        
-
-    def grover_mixer(self, state_preparation):
-        """
-        Defines a Grover-like mixer circuit for QAOA.
-
-        Parameters:
-        - state_preparation: QuantumCircuit 
-            The U_S circuit for state preparation (e.g., uniform superposition over feasible states).
-
-        Returns:
-        - QuantumCircuit: Grover mixer circuit implementing
-        U_S^dagger * X^n * (Controlled-Phase) * X^n * U_S
-        """
-        # Create the circuit and define the QAOA mixer parameter
-        beta = Parameter("β")
-        num_qubits = len(self.qubo.variables)
-        qc = QuantumCircuit(num_qubits)
-
-        # 1) US^\dagger
-        qc.compose(state_preparation.inverse(), range(num_qubits), inplace=True)
-
-        # 2) X^n
-        qc.x(range(num_qubits))
-
-        # 3) Multi-controlled phase gate (PhaseGate with n-1 controls if num_qubits > 1)
-        if num_qubits == 1:
-            phase_gate = PhaseGate(-beta)
-        else:
-            phase_gate = PhaseGate(-beta).control(num_qubits - 1)
-        qc.append(phase_gate, qc.qubits)
-
-        # 4) X^n
-        qc.x(range(num_qubits))
-
-        # 5) US
-        qc.compose(state_preparation, range(num_qubits), inplace=True)
-
-        return qc
 
 
     def solve_problem(self, optimizer, p=1, parameters = None):
@@ -848,15 +746,17 @@ class DCMST_QUBO:
                 elif self.mixer == 'LogicalX':
                     self.initial_state = self.initial_state_OHE()
                     self.mixer = self.mixer_customized()
-                elif self.mixer == 'Grover':
-                    self.initial_state = self.initial_state_OHE()
-                    # unitary_qc = self.initial_state.decompose() 
-                    self.mixer = self.grover_mixer(self.initial_state)
+
 
                 optimized_mixer = transpile(self.mixer, backend, optimization_level=3)
 
-                # optimized_mixer.draw(output="mpl").savefig("mixer_circuit_optimized_3.png")
+                optimized_mixer.draw(output="mpl").savefig("mixer_circuit.png")
 
+                # Create a custom pass manager
+                # pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
+
+                # Transpile the circuit
+                # optimized_mixer = pm.run(self.mixer)             
 
                 qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, 
                                 mixer=optimized_mixer, initial_state=self.initial_state ,callback=callback)
@@ -872,11 +772,6 @@ class DCMST_QUBO:
             else:
                 qaoa = qaoa_mes
         else:
-            from qiskit_aer.primitives import Estimator as AerEstimator
-            from qiskit import ClassicalRegister
-
-            estimator = AerEstimator()
-
             # 1) Build the parameterized ansatz for VQE
             from qiskit.circuit.library import TwoLocal
 

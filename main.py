@@ -49,7 +49,7 @@ def main():
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
     
     # With LocicalX Mixer - This is not working yet
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
 
     # With mixer X - Standard formulation
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config)
@@ -59,9 +59,6 @@ def main():
 
     # With mixer X - Standard formulation + redundant conditions
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, redundancy=True)
-
-    # With mixer Grover - initial_state = 'OHE'
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Grover', initial_state='OHE')    
 
     # With VQE 
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, VQE=True)
