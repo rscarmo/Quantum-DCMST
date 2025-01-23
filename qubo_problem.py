@@ -37,7 +37,7 @@ import sys
 # matplotlib.use('Agg')
 
 class DCMST_QUBO:
-    def __init__(self, G, degree_constraints, config, root=0, mixer = None, initial_state = None,  
+    def __init__(self, G, degree_constraints, config, mixer = None, initial_state = None,  
                  regularization = 0, seed = 42, warm_start = False, redundancy = False, VQE = False, 
                  Metaheuristic =False):
         """
@@ -52,7 +52,7 @@ class DCMST_QUBO:
         self.G = G
         self.n = G.number_of_nodes()
         self.degree_constraints = degree_constraints
-        self.root = root
+        self.root = 0
         self.config = config
         self.mixer = mixer
         self.initial_state = initial_state
@@ -356,134 +356,80 @@ class DCMST_QUBO:
 
         return ws_mixer      
     
-    def validate_topological_states(self, n_nodes):
+    def has_cycle(self, adjacency_list, nodes):
         """
-        Validates possible states for variables x_u,v to ensure they represent a valid acyclic tree
-        rooted at node 0.
+        Detects if there's a cycle in the directed graph represented by adjacency_list.
 
         Parameters:
-            n_nodes (int): Number of nodes in the graph (including the root node 0).
-
-        Returns:
-            List[str]: List of valid states in binary format (e.g., ["000", "001"]).
-        """
-        valid_states = []
-        # Number of variables: For each ordered pair (u, v), u != v, and u, v != 0
-        non_root_nodes = list(range(1, n_nodes))
-        n_variables = len(non_root_nodes) * (len(non_root_nodes) - 1)
-
-        # Generate all possible bit combinations for n_variables
-        all_states = product([0, 1], repeat=n_variables)
-
-        # Define mapping of variables to ordered pairs (u, v) where u, v are non-root nodes
-        # For example, for n_nodes=4: [(1,2), (1,3), (2,1), (2,3), (3,1), (3,2)]
-        variable_pairs = []
-        for u in non_root_nodes:
-            for v in non_root_nodes:
-                if u == v:
-                    continue
-                variable_pairs.append((u, v))
-
-        for state in all_states:
-            # Construct adjacency list based on the state
-            # Initialize adjacency list including the root node 0
-            adjacency_list = {u: [] for u in range(n_nodes)}
-            # Implicitly connect the root node to all nodes if necessary
-            # For this implementation, we'll assume that connectivity to the root is handled separately
-            # and focus on ensuring acyclicity among non-root nodes
-
-            for idx, bit in enumerate(state):
-                if bit == 1:
-                    u, v = variable_pairs[idx]
-                    adjacency_list[u].append(v)
-
-            # Check if the directed graph is acyclic and connected to root
-            if self.is_acyclic(adjacency_list, n_nodes) and self.is_connected_to_root(adjacency_list, n_nodes):
-                # Convert the state to a binary string and add to valid_states
-                valid_states.append("".join(map(str, state)))
-
-        return valid_states
-
-    def is_acyclic(self, adjacency_list, n_nodes):
-        """
-        Checks if the adjacency list represents an acyclic directed graph.
-
-        Args:
-            adjacency_list (dict): Adjacency list representing the graph.
-            n_nodes (int): Number of nodes in the graph.
-
-        Returns:
-            bool: True if acyclic, False otherwise.
-        """
-        visited = [False] * n_nodes
-        rec_stack = [False] * n_nodes
-
-        for node in range(n_nodes):
-            if not visited[node]:
-                if self.dfs_cycle(node, adjacency_list, visited, rec_stack, n_nodes):
-                    return False  # Cycle detected
-
-        return True  # No cycles detected
-
-    def dfs_cycle(self, node, adjacency_list, visited, rec_stack, n_nodes):
-        """
-        Helper function for cycle detection using DFS.
-
-        Args:
-            node (int): Current node.
-            adjacency_list (dict): Adjacency list representing the graph.
-            visited (List[bool]): Visited nodes.
-            rec_stack (List[bool]): Nodes in the recursion stack.
-            n_nodes (int): Number of nodes in the graph.
+            adjacency_list (dict): Adjacency list of the graph.
+            nodes (list): List of nodes to consider in the graph.
 
         Returns:
             bool: True if a cycle is detected, False otherwise.
         """
-        visited[node] = True
-        rec_stack[node] = True
+        visited = {node: False for node in nodes}
+        rec_stack = {node: False for node in nodes}
 
-        for neighbor in adjacency_list[node]:
-            if not visited[neighbor]:
-                if self.dfs_cycle(neighbor, adjacency_list, visited, rec_stack, n_nodes):
+        def dfs(node):
+            visited[node] = True
+            rec_stack[node] = True
+
+            for neighbor in adjacency_list.get(node, []):
+                if not visited[neighbor]:
+                    if dfs(neighbor):
+                        return True
+                elif rec_stack[neighbor]:
+                    return True  # Cycle detected
+
+            rec_stack[node] = False
+            return False
+
+        for node in nodes:
+            if not visited[node]:
+                if dfs(node):
                     return True
-            elif rec_stack[neighbor]:
-                return True  # Cycle detected
-
-        rec_stack[node] = False
         return False
 
-    def is_connected_to_root(self, adjacency_list, n_nodes):
+    def get_valid_bitstrings(self, n_non_root):
         """
-        Ensures that all non-root nodes are connected to the root node (node 0).
+        Generates all valid bitstring configurations for a given number of non-root nodes,
+        ensuring that no cycles are formed.
 
-        Args:
-            adjacency_list (dict): Adjacency list representing the graph.
-            n_nodes (int): Number of nodes in the graph.
+        Parameters:
+            n_non_root (int): Number of non-root nodes in the graph.
 
         Returns:
-            bool: True if all non-root nodes are connected to the root, False otherwise.
+            List[str]: List of valid bitstrings representing acyclic configurations.
         """
-        # Perform BFS starting from root node 0
-        from collections import deque
-
-        visited = [False] * n_nodes
-        queue = deque()
-        queue.append(0)
-        visited[0] = True
-
-        while queue:
-            current = queue.popleft()
-            for neighbor in adjacency_list[current]:
-                if not visited[neighbor]:
-                    visited[neighbor] = True
-                    queue.append(neighbor)
-
-        # Check if all non-root nodes are visited
-        for node in range(1, n_nodes):
-            if not visited[node]:
-                return False  # Node not connected to root
-
-        return True  # All non-root nodes are connected to root
+        valid_bitstrings = []
+        
+        # Generate all unique ordered pairs (u, v) where u < v
+        variable_pairs = []
+        for u in range(1, n_non_root + 1):
+            for v in range(u + 1, n_non_root + 1):
+                variable_pairs.append((u, v))
+        
+        num_vars = len(variable_pairs)
+        
+        # Iterate over all possible bitstrings
+        for bits in product([0, 1], repeat=num_vars):
+            adjacency_list = {node: [] for node in range(1, n_non_root + 1)}
+            
+            # Map bits to directed edges
+            for idx, bit in enumerate(bits):
+                u, v = variable_pairs[idx]
+                if bit == 1:
+                    adjacency_list[u].append(v)  # u precedes v
+                else:
+                    adjacency_list[v].append(u)  # v precedes u
+            
+            # Check for cycles
+            if not self.has_cycle(adjacency_list, list(range(1, n_non_root + 1))):
+                # Convert bits tuple to string
+                bitstring = ''.join(map(str, bits))
+                valid_bitstrings.append(bitstring)
+        
+        return valid_bitstrings
  
 
     def generate_z_states(self):
@@ -603,7 +549,8 @@ class DCMST_QUBO:
         self._num_x = len(self.group_x)
         self._num_e_v0 = len(self.group_e_v0)
         # I will use this valid_x_states list, ['000000', '000001', ...], to prepare the initial state
-        self.valid_x_states = self.validate_topological_states(self.n)
+        self.valid_x_states = self.get_valid_bitstrings(self.n-1)
+        print(self.valid_x_states)
         init_qc = self.prepare_superposition(init_qc, self.valid_x_states, self.group_x)
 
         # I'm not certain if this worth the cost
@@ -737,20 +684,23 @@ class DCMST_QUBO:
 
         # For the x_uv
         # Needs to search in the hamiltonian_mixers.cvs using the valid_states
-        filtered_row = df[df['states'] == str(self.valid_x_states)]
-        if len(self.group_x) == 1:
-            mixer_circuit.rx(-2*beta, self.group_x)
-        else:
-            if not filtered_row.empty:  # Verificar se encontrou o estado
-                hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
-                print(hamiltonian, self.group_x)
-                
-                # Chamar a função mixer_LogicalX com os dados encontrados
-                mixer_circuit = self.mixer_LogicalX(hamiltonian, self.group_x, beta, mixer_circuit)
+        for ids in self.group_x:
+            mixer_circuit.rx(-2*beta, ids)
 
-            else:
-                print(f"Estado {self.valid_x_states} referente às variaveis x_uv não encontrado no arquivo CSV.")
-                sys.exit()        
+        # filtered_row = df[df['states'] == str(self.valid_x_states)]
+        # if len(self.group_x) == 1:
+        #     mixer_circuit.rx(-2*beta, self.group_x)
+        # else:
+        #     if not filtered_row.empty:  # Verificar se encontrou o estado
+        #         hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
+        #         print(hamiltonian, self.group_x)
+                
+        #         # Chamar a função mixer_LogicalX com os dados encontrados
+        #         mixer_circuit = self.mixer_LogicalX(hamiltonian, self.group_x, beta, mixer_circuit)
+
+        #     else:
+        #         print(f"Estado {self.valid_x_states} referente às variaveis x_uv não encontrado no arquivo CSV.")
+        #         sys.exit()        
 
         # For the z_vi
         # Needs to search in the hamiltonian_mixers.cvs using the valid_states
