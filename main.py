@@ -14,7 +14,7 @@ def main():
     # Example usage:
     N = 4
     weight_range = (10, 100)
-    seed = 62 #78
+    seed = 51 #78
     max_degree = 2 
 
     # Instantiate and create the graph
@@ -46,10 +46,10 @@ def main():
     # So, we have to mantain those variables binary and relax all the others. 
 
     # With Warm-Starting
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
     
     # With LocicalX Mixer - This is not working yet
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
 
     # With mixer X - Standard formulation
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config)

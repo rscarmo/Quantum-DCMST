@@ -356,60 +356,135 @@ class DCMST_QUBO:
 
         return ws_mixer      
     
-    def validate_topological_states(self, n_variables):
+    def validate_topological_states(self, n_nodes):
         """
-        Valida os estados possíveis para variáveis x_u,v para garantir que são acíclicos.
+        Validates possible states for variables x_u,v to ensure they represent a valid acyclic tree
+        rooted at node 0.
 
-        Parâmetros:
-        n_variables (int): Número de variáveis x_u,v no grafo (binomial(N-1, 2)).
+        Parameters:
+            n_nodes (int): Number of nodes in the graph (including the root node 0).
 
-        Retorna:
-        List[str]: Lista de estados válidos no formato binário (e.g., ["000", "001"]).
+        Returns:
+            List[str]: List of valid states in binary format (e.g., ["000", "001"]).
         """
         valid_states = []
-        # Gera todas as combinações possíveis de bits para n_variables
+        # Number of variables: For each ordered pair (u, v), u != v, and u, v != 0
+        non_root_nodes = list(range(1, n_nodes))
+        n_variables = len(non_root_nodes) * (len(non_root_nodes) - 1)
+
+        # Generate all possible bit combinations for n_variables
         all_states = product([0, 1], repeat=n_variables)
-    
+
+        # Define mapping of variables to ordered pairs (u, v) where u, v are non-root nodes
+        # For example, for n_nodes=4: [(1,2), (1,3), (2,1), (2,3), (3,1), (3,2)]
+        variable_pairs = []
+        for u in non_root_nodes:
+            for v in non_root_nodes:
+                if u == v:
+                    continue
+                variable_pairs.append((u, v))
+
         for state in all_states:
-            # Verifica se o estado é transitivo (condição para ser válido)
-            if self.is_transitive(state, n_variables):
-                # Adiciona o estado válido na lista como string binária
+            # Construct adjacency list based on the state
+            # Initialize adjacency list including the root node 0
+            adjacency_list = {u: [] for u in range(n_nodes)}
+            # Implicitly connect the root node to all nodes if necessary
+            # For this implementation, we'll assume that connectivity to the root is handled separately
+            # and focus on ensuring acyclicity among non-root nodes
+
+            for idx, bit in enumerate(state):
+                if bit == 1:
+                    u, v = variable_pairs[idx]
+                    adjacency_list[u].append(v)
+
+            # Check if the directed graph is acyclic and connected to root
+            if self.is_acyclic(adjacency_list, n_nodes) and self.is_connected_to_root(adjacency_list, n_nodes):
+                # Convert the state to a binary string and add to valid_states
                 valid_states.append("".join(map(str, state)))
-        
+
         return valid_states
 
-
-    def is_transitive(self, state, n_variables):
+    def is_acyclic(self, adjacency_list, n_nodes):
         """
-        Verifica se um estado é transitivo, ou seja, se não cria ciclos.
+        Checks if the adjacency list represents an acyclic directed graph.
 
-        Parâmetros:
-        state (tuple): Um estado das variáveis x_u,v (e.g., (0, 1, 0)).
-        n_variables (int): Número de variáveis no estado.
+        Args:
+            adjacency_list (dict): Adjacency list representing the graph.
+            n_nodes (int): Number of nodes in the graph.
 
-        Retorna:
-        bool: True se o estado é válido, False caso contrário.
+        Returns:
+            bool: True if acyclic, False otherwise.
         """
-        # Mapeia variáveis x_u,v para uma matriz de ordenação
-        matrix_size = int((1 + (1 + 8 * n_variables)**0.5) // 2)  # Número de vértices no grafo
-        ordering_matrix = [[0] * matrix_size for _ in range(matrix_size)]
-        
-        # Preenche a matriz de ordenação com base no estado
-        index = 0
-        for u in range(matrix_size):
-            for v in range(u + 1, matrix_size):
-                ordering_matrix[u][v] = state[index]
-                ordering_matrix[v][u] = 1 - state[index]
-                index += 1
+        visited = [False] * n_nodes
+        rec_stack = [False] * n_nodes
 
-        # Verifica se a matriz representa uma ordenação acíclica (transitiva)
-        for u in range(matrix_size):
-            for v in range(matrix_size):
-                for w in range(matrix_size):
-                    if ordering_matrix[u][v] == 1 and ordering_matrix[v][w] == 1:
-                        if ordering_matrix[u][w] != 1:
-                            return False
-        return True   
+        for node in range(n_nodes):
+            if not visited[node]:
+                if self.dfs_cycle(node, adjacency_list, visited, rec_stack, n_nodes):
+                    return False  # Cycle detected
+
+        return True  # No cycles detected
+
+    def dfs_cycle(self, node, adjacency_list, visited, rec_stack, n_nodes):
+        """
+        Helper function for cycle detection using DFS.
+
+        Args:
+            node (int): Current node.
+            adjacency_list (dict): Adjacency list representing the graph.
+            visited (List[bool]): Visited nodes.
+            rec_stack (List[bool]): Nodes in the recursion stack.
+            n_nodes (int): Number of nodes in the graph.
+
+        Returns:
+            bool: True if a cycle is detected, False otherwise.
+        """
+        visited[node] = True
+        rec_stack[node] = True
+
+        for neighbor in adjacency_list[node]:
+            if not visited[neighbor]:
+                if self.dfs_cycle(neighbor, adjacency_list, visited, rec_stack, n_nodes):
+                    return True
+            elif rec_stack[neighbor]:
+                return True  # Cycle detected
+
+        rec_stack[node] = False
+        return False
+
+    def is_connected_to_root(self, adjacency_list, n_nodes):
+        """
+        Ensures that all non-root nodes are connected to the root node (node 0).
+
+        Args:
+            adjacency_list (dict): Adjacency list representing the graph.
+            n_nodes (int): Number of nodes in the graph.
+
+        Returns:
+            bool: True if all non-root nodes are connected to the root, False otherwise.
+        """
+        # Perform BFS starting from root node 0
+        from collections import deque
+
+        visited = [False] * n_nodes
+        queue = deque()
+        queue.append(0)
+        visited[0] = True
+
+        while queue:
+            current = queue.popleft()
+            for neighbor in adjacency_list[current]:
+                if not visited[neighbor]:
+                    visited[neighbor] = True
+                    queue.append(neighbor)
+
+        # Check if all non-root nodes are visited
+        for node in range(1, n_nodes):
+            if not visited[node]:
+                return False  # Node not connected to root
+
+        return True  # All non-root nodes are connected to root
+ 
 
     def generate_z_states(self):
         """
@@ -528,7 +603,7 @@ class DCMST_QUBO:
         self._num_x = len(self.group_x)
         self._num_e_v0 = len(self.group_e_v0)
         # I will use this valid_x_states list, ['000000', '000001', ...], to prepare the initial state
-        self.valid_x_states = self.validate_topological_states(self._num_x)
+        self.valid_x_states = self.validate_topological_states(self.n)
         init_qc = self.prepare_superposition(init_qc, self.valid_x_states, self.group_x)
 
         # I'm not certain if this worth the cost
