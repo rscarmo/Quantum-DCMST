@@ -546,14 +546,13 @@ class DCMST_QUBO:
 
         return init_qc
 
-
     def mixer_LogicalX(self, hamiltonian, qubit_indices, beta, circuit):
         """
         Constructs and appends the PauliEvolutionGate for the mixer Hamiltonian.
 
         Args:
             hamiltonian (list of tuples): Each tuple contains a main Pauli string and a list of constraint tuples.
-                                          Example: [('IX', [('ZI', 1.0), ('II', 0.0)]), ('XI', [('IZ', 1.0), ('II', 0.0)])]
+                                          Example: [('IIX', [('III', 1.0), ('IZI', 1.0)]), ('IXX', [('IIZ', 1.0), ('IZZ', 1.0)]), ('XII', [('III', 1.0), ('IZZ', 1.0)])]
             qubit_indices (list of int): Qubit indices the Pauli strings act upon.
             beta (float): Parameter for the mixer.
             circuit (QuantumCircuit): The quantum circuit to append the mixer to.
@@ -562,6 +561,36 @@ class DCMST_QUBO:
             QuantumCircuit: The updated circuit with the mixer appended.
         """
 
+        def parse_pauli_label(pauli_label):
+            """
+            Parses a Pauli label string with a phase prefix and returns the phase and operator string.
+
+            Args:
+                pauli_label (str): The Pauli label, e.g., '-iZY', 'IX', 'iXZ', '-II'
+
+            Returns:
+                tuple: (phase, operator_str)
+                    phase: complex number (1, -1, 1j, -1j)
+                    operator_str: str, the Pauli operator string
+            """
+            if pauli_label.startswith('-i'):
+                phase = -1j
+                operator_str = pauli_label[2:]
+            elif pauli_label.startswith('i'):
+                phase = 1j
+                operator_str = pauli_label[1:]
+            elif pauli_label.startswith('-'):
+                phase = -1.0
+                operator_str = pauli_label[1:]
+            elif pauli_label.startswith('+'):
+                phase = 1.0
+                operator_str = pauli_label[1:]
+            else:
+                phase = 1.0
+                operator_str = pauli_label
+            return (phase, operator_str)
+
+        num_qubits = len(qubit_indices)
         # Initialize lists for Pauli strings and coefficients
         pauli_strings = []
         coefficients = []
@@ -574,15 +603,21 @@ class DCMST_QUBO:
                 combined_pauli = main_pauli.dot(constraint_pauli)
                 # Convert Pauli object back to string
                 combined_pauli_str = combined_pauli.to_label()
-                # Multiply coefficient by the phase
-                # phase is a complex number: 1, -1, 1j, -1j
-                adjusted_coef = coef
+                print(f'AQUI ESTÁ O OPERADOR: {combined_pauli_str}')
+                # Parse to get phase and operator
+                phase, operator_str = parse_pauli_label(combined_pauli_str)
+                print(f"    Parsed Phase: {phase}, Operator: {operator_str}")
+                # Adjust coefficient by phase
+                adjusted_coef = coef * phase
                 # If the coefficient is zero or Pauli is all 'I's, skip
-                if adjusted_coef == 0.0 or combined_pauli_str == 'II':
-                    continue  # Avoid adding 'II' to the Hamiltonian
+                if adjusted_coef == 0.0 or operator_str == 'I' * num_qubits:
+                    print(f"    Skipping term: {operator_str} with adjusted coefficient: {adjusted_coef}")
+                    continue  # Avoid adding 'III' to the Hamiltonian
 
-                pauli_strings.append(combined_pauli_str)
+                # Append to lists
+                pauli_strings.append(operator_str)
                 coefficients.append(adjusted_coef.real)  # Use the real part
+                print(f"    Added Pauli string: {operator_str} with coefficient: {adjusted_coef.real}")
 
         # Create SparsePauliOp with the list
         sp_op_total = SparsePauliOp.from_list(list(zip(pauli_strings, coefficients)))
@@ -599,6 +634,7 @@ class DCMST_QUBO:
         circuit.append(evolution_gate, qubit_indices)
 
         return circuit
+
 
     def mixer_customized(self):
         mixer_circuit = QuantumCircuit(len(self.qubo.variables))

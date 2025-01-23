@@ -46,9 +46,7 @@ def interpret_solution(solution_dict, adj_matrix, N, Delta):
     mst_graph.add_nodes_from(range(N))  # Add all nodes (0 to N-1)
     added_edges = set()
 
-    # ------------------------------------------------------------------
     # 1) Decode each node's degree z_v from the variables "z_{v}_{i}"
-    # ------------------------------------------------------------------
     binary_degree_size = int(math.ceil(np.log2(Delta + 1)))
     z_values = [0] * N
 
@@ -66,18 +64,15 @@ def interpret_solution(solution_dict, adj_matrix, N, Delta):
 
         z_values[v] = z_v
 
-    # ------------------------------------------------------------------
     # 2) Reconstruct edges based on e_{u,v} and x_{u,v} variables
-    # ------------------------------------------------------------------
     mst_edges = []
     for u in range(N):
         for v in range(u + 1, N):
             if adj_matrix[u, v] <= 0:
                 continue  # No edge in the original graph
 
-            # ----------------------------------------------------
             # Case A: If u == root, we only consider e_{0,v}
-            # ----------------------------------------------------
+
             if u == root:
                 var_name_uv = f"e_{u}_{v}"  # e_0_v
                 e_uv = solution_dict.get(var_name_uv, 0)
@@ -88,9 +83,7 @@ def interpret_solution(solution_dict, adj_matrix, N, Delta):
                     added_edges.add((u, v))
                 continue
 
-            # ----------------------------------------------------
             # Case B: Non-root edges => e_{u,v}, e_{v,u}, x_{u,v}
-            # ----------------------------------------------------
             var_name_uv = f"e_{u}_{v}"
             var_name_vu = f"e_{v}_{u}"
             e_uv = solution_dict.get(var_name_uv, 0)
@@ -113,10 +106,8 @@ def interpret_solution(solution_dict, adj_matrix, N, Delta):
                 mst_graph.add_edge(u, v, weight=weight)
                 added_edges.add((u, v))
 
-    # ------------------------------------------------------------------
     # 3) Check if we formed a valid MST
     #    (connected and exactly N-1 edges)
-    # ------------------------------------------------------------------
     if nx.is_connected(mst_graph) and mst_graph.number_of_edges() == (N - 1):
         # Optional: Verify the actual degree vs. z_v
         actual_degrees = [mst_graph.degree[v] for v in range(N)]
@@ -183,7 +174,7 @@ def sample_and_plot_histogram(samples, adj_matrix, N, Delta, interpret_solution_
     plt.xlabel("Solutions")
     plt.ylabel("Frequency")
     plt.tight_layout()
-    plt.show()
+    # plt.show()
 
     # Step 5: Print the details of the most common solutions
     print("\nTop Valid MST Solutions:")

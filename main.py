@@ -85,7 +85,7 @@ def main():
         qaoa_res = []
         for s in samples:
             bitstring = ''.join(str(int(v)) for v in s.x)
-            # bitstring = bitstring[::-1]            
+            bitstring = bitstring[::-1]            
             qaoa_res.append((bitstring, s.fval, s.probability))
 
         res = sorted(qaoa_res, key=lambda x: -x[2])[0:max_len]
