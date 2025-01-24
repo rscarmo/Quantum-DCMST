@@ -3,7 +3,7 @@ from qiskit_optimization.converters import QuadraticProgramToQubo
 from qiskit_ibm_runtime import QiskitRuntimeService
 from qiskit_optimization.algorithms import MinimumEigenOptimizer, CplexOptimizer
 from qiskit_algorithms import QAOA, SamplingVQE
-from qiskit.primitives import Sampler
+# from qiskit.primitives import Sampler
 from qiskit.primitives import BackendSampler    
 from qiskit_algorithms.utils import algorithm_globals
 from qiskit_optimization.algorithms import WarmStartQAOAOptimizer
@@ -24,6 +24,10 @@ from qiskit.synthesis.evolution import LieTrotter
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 from qiskit_aer import QasmSimulator
 from qiskit.quantum_info import Pauli
+from qiskit.circuit.library import QAOAAnsatz
+from qiskit_ibm_runtime import Session, EstimatorV2 as Estimator
+from qiskit_ibm_runtime import SamplerV2 as Sampler
+from scipy.optimize import minimize
 
 
 import time
@@ -64,6 +68,9 @@ class DCMST_QUBO:
         self.Metaheuristic = Metaheuristic
         self.num_qubits = 0
         self.var_names = None
+
+        self.objective_func_vals = []
+        self.qaoa_circuit = None
 
         self.max_degree = self.degree_constraints.get(self.n - 1, self.n - 1)        
         self.binary_bits = int(np.ceil(np.log2(self.max_degree+1)))        
@@ -300,7 +307,8 @@ class DCMST_QUBO:
         else:
             print("Proceeding with IBM Quantum hardware...")
             service = QiskitRuntimeService(channel='ibm_quantum', token=self.config.QXToken)
-            backend = service.least_busy(n_qubits=127, operational=True, simulator=False)
+            # backend = service.least_busy(min_num_qubits=127, operational=True, simulator=False)
+            backend = service.backend('ibm_brisbane')
             print(f"Connected to {backend.name}!")
         return backend    
 
@@ -721,6 +729,23 @@ class DCMST_QUBO:
         return mixer_circuit        
 
 
+    def cost_func_estimator(self, params, ansatz, hamiltonian, estimator, offset = 0.0):
+
+        # transform the observable defined on virtual qubits to
+        # an observable defined on all physical qubits
+        isa_hamiltonian = hamiltonian.apply_layout(ansatz.layout)
+
+        pub = (ansatz, isa_hamiltonian, params)
+        job = estimator.run([pub])
+
+        results = job.result()[0]
+        cost = results.data.evs
+
+        self.objective_func_vals.append(cost)
+
+
+        return cost + offset
+
     def solve_problem(self, optimizer, p=1, parameters = None):
         # Convert the problem with constraints into an unconstrained QUBO
         converter = QuadraticProgramToQubo(penalty=self.P_I)
@@ -740,11 +765,8 @@ class DCMST_QUBO:
         # )        
 
         # Define a callback function to track progress
-        optimum_parameters = None
-        def callback(eval_count, params, mean, std):
-            global optimum_parameters
-            print(f"Eval count: {eval_count}, Parameters: {params}, Mean + offset: {mean + offset}")
-            optimum_parameters = params
+        def callback(params):
+            print(f"Current parameters: {params}")
         # Set up QAOA with the callback
 
         np.random.seed(self.seed)
@@ -776,19 +798,6 @@ class DCMST_QUBO:
                     self.mixer = self.mixer_customized()
 
                 self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
-
-                optimized_mixer = transpile(self.mixer, backend, optimization_level=3)
-
-                optimized_mixer.draw(output="mpl").savefig("mixer_circuit_optimized.png")
-
-                # Create a custom pass manager
-                # pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
-
-                # Transpile the circuit
-                # optimized_mixer = pm.run(self.mixer)             
-
-                qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, 
-                                mixer=optimized_mixer, initial_state=self.initial_state ,callback=callback)
             else:
                 qaoa_mes = QAOA(sampler=sampler, optimizer=optimizer, reps=p, initial_point=initial_params, callback=callback)
                 if self.warm_start:
@@ -797,11 +806,30 @@ class DCMST_QUBO:
                     )
 
             if not self.warm_start:
-                qaoa = MinimumEigenOptimizer(qaoa_mes, penalty=self.P_I)
+                # qaoa = MinimumEigenOptimizer(qaoa_mes, penalty=self.P_I)
+                qaoa_mes = QAOAAnsatz(cost_operator=qubo_ops, reps=p, mixer_operator=self.mixer, initial_state=self.initial_state)
+                qaoa_mes.measure_all()
+
+                # Create a custom pass manager
+                pm = generate_preset_pass_manager(optimization_level=3, backend=backend)
+
+                # Transpile the circuit
+                self.qaoa_circuit = pm.run(qaoa_mes)  
+
+                estimator = Estimator(backend)
+                estimator.options.default_shots = 1000  
+
+                if self.config.SIMULATION == False:
+                    # Set simple error suppression/mitigation options
+                    estimator.options.dynamical_decoupling.enable = True
+                    estimator.options.dynamical_decoupling.sequence_type = "XY4"
+                    estimator.options.twirling.enable_gates = True
+                    estimator.options.twirling.num_randomizations = "auto"
+
             else:
                 qaoa = qaoa_mes
         else:
-            # 1) Build the parameterized ansatz for VQE
+            # Build the parameterized ansatz for VQE
             from qiskit.circuit.library import TwoLocal
 
             ansatz = TwoLocal(len(self.qubo.variables), rotation_blocks='ry', entanglement_blocks='cx', entanglement='linear', reps=p)
@@ -823,7 +851,7 @@ class DCMST_QUBO:
             print(f"VQE ground state energy (with offset): {(result.eigenvalue + offset).real:.5f}")
             print(f"Execution time: {self.execution_time:.4f} seconds")
 
-            # 4) Retrieve the optimal parameters
+            # Retrieve the optimal parameters
             optimal_params = result.optimal_point
             print("Optimal parameters:", optimal_params)
 
@@ -839,22 +867,48 @@ class DCMST_QUBO:
             counts = {state: int(round(prob * shots)) for state, prob in float_counts.items()}
 
 
-            # 7) Return or store them
+            # Return or store them
             print(counts)
             return counts
 
         start_time = time.time()
-        qaoa_result = qaoa.solve(self.qubo)
+        # qaoa_result = qaoa.solve(self.qubo)
+        qaoa_result = minimize(
+                self.cost_func_estimator,
+                initial_params,
+                args=(self.qaoa_circuit, qubo_ops, estimator, offset),
+                method="COBYLA",
+                tol=1e-2,
+                callback=callback
+            )
         end_time = time.time()
+        print(qaoa_result)        
 
         self.execution_time = end_time - start_time
-        self.solution = qaoa_result.variables_dict
+        # self.solution = qaoa_result.variables_dict
         print(f"Execution time: {self.execution_time} seconds")
-        print(qaoa_result.prettyprint())
 
-        return qaoa_result.samples
+        return qaoa_result.x
 
 
+    def qubo_sample(self, optimal_params):
+        backend = self.configure_backend()
+        sampler = Sampler(mode=backend)
+        sampler.options.default_shots = 1000
+        optimized_circuit = self.qaoa_circuit.assign_parameters(optimal_params)               
+
+        pub= (optimized_circuit, )
+        job = sampler.run([pub], shots=int(1e4))
+        counts_int = job.result()[0].data.meas.get_int_counts()
+        counts_bin = job.result()[0].data.meas.get_counts()
+        shots = sum(counts_int.values())
+
+        # Reverse the bits of all keys in counts_bin
+        reversed_distribution_bin = {key[::-1]: val/shots for key, val in counts_bin.items()}
+
+        print(reversed_distribution_bin)
+
+        return reversed_distribution_bin       
 
     def print_number_of_qubits(self):
         """

@@ -46,10 +46,10 @@ def main():
     # So, we have to mantain those variables binary and relax all the others. 
 
     # With Warm-Starting
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
     
     # With LocicalX Mixer - This is not working yet
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
 
     # With mixer X - Standard formulation
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config)
@@ -74,29 +74,14 @@ def main():
     p = 1  # QAOA circuit depth
 
     # When metaheuristic = False, this function uses Cobyla as optimizer, solves the problem and returns the samples.
-    samples = qubo_problem.solve_problem(optimizer, p)
-
+    # samples = qubo_problem.solve_problem(optimizer, p)
+    optimal_params = qubo_problem.solve_problem(optimizer, p)
+    samples = qubo_problem.qubo_sample(optimal_params)
+    
     # When metaheuristic = True, this function receives parameters and returns the cost/loss value.
     # parameters = np.random.random(qubo_problem.num_qubits)
     # samples = qubo_problem.solve_problem(optimizer, p, parameters=parameters)
 
-    # This is just the test if the correct answers are the same as the most sampled.
-    def format_qaoa_samples(samples, max_len: int = 10):
-        qaoa_res = []
-        for s in samples:
-            bitstring = ''.join(str(int(v)) for v in s.x)
-            bitstring = bitstring[::-1]            
-            qaoa_res.append((bitstring, s.fval, s.probability))
-
-        res = sorted(qaoa_res, key=lambda x: -x[2])[0:max_len]
-
-        return [(_[0] + f": value: {_[1]:.3f}, probability: {1e2*_[2]:.1f}%") for _ in res]
-
-    # this is just because the VQE=true returns a different object that cannot be formated as the output of qaoa
-    try:
-        print(format_qaoa_samples(samples))   
-    except:
-        pass
 
     # It seems to me that the best result considered by qiskit only takes into 
     # account the objective function and constraints, but not  penalties added directly to the QuadraticProgramm.
