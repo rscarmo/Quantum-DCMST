@@ -10,11 +10,22 @@ def sphere(x):
     return np.sum(x**2)
 
 
+class Teste(object):
+    def __init__(self):
+        pass
+
+    def __call__(self, x):
+        return np.sum(x**2)
+
+
 def main(args):
 
     qopt = QOPT(args.config)
     # faz optimização com funcção de loss sphere
-    results = qopt(sphere)
+
+    teste = Teste()
+    # print("Teste loss:", teste(np.array([1, 2, 3, 4])))
+    results = qopt(teste)
     print(results)
 
 
