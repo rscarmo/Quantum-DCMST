@@ -334,6 +334,47 @@ class DCMST_QUBO:
                 linear=all_terms, sense="==", rhs=0.0, name=f"degree_constraint_{v}"
             )
 
+    def brute_force_solution(self):
+        """
+        Exhaustively enumerates all 2^N possible solutions to the QUBO,
+        checks feasibility for each, and returns the best (lowest cost)
+        feasible bitstring and its cost.
+
+        Returns:
+            best_bitstring (str): A string of '0's and '1's representing the best found solution.
+            best_cost (float): The objective function value of that best solution.
+        """
+        from itertools import product
+        import math
+
+        num_vars = len(self.qubo.variables)
+        best_cost = math.inf
+        best_bitstring = None
+
+        # Loop over all 2^N possible assignments
+        for bits_tuple in product([0, 1], repeat=num_vars):
+            # Convert tuple -> list[float] for Qiskit
+            candidate_x = list(map(float, bits_tuple))
+
+            # Check feasibility (i.e., constraints) within some numerical tolerance
+            if self.qubo.is_feasible(candidate_x):
+                # Evaluate the objective value if feasible
+                cost = self.qubo.objective.evaluate(candidate_x)
+                # Track the best feasible solution
+                if cost < best_cost:
+                    best_cost = cost
+                    best_bitstring = bits_tuple  # keep the raw tuple
+
+        # Convert the best_bitstring tuple to a single string
+        if best_bitstring is not None:
+            best_bitstring_str = ''.join(map(str, best_bitstring))
+        else:
+            best_bitstring_str = None
+
+        return best_bitstring_str, best_cost
+
+
+
     def configure_backend(self):
         if self.config.SIMULATION == "True":
             if not self.fake_backend:

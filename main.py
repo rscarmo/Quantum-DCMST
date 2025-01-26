@@ -12,7 +12,7 @@ def main():
     config = Config()
 
     # Example usage:
-    N = 4
+    N = 3
     weight_range = (10, 100)
     seed = 51 #78
     max_degree = 2 
@@ -63,7 +63,7 @@ def main():
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, redundancy=True)
 
     # With VQE 
-    
+
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, VQE=True)
 
     qubo_problem.configure_variables()
@@ -72,6 +72,9 @@ def main():
 
     # Print the number of qubits necessary to solve the problem
     qubo_problem.print_number_of_qubits()
+
+    # Get a reference solution by brute force (only feasible for small problems between 20-25 variables!)
+    bf_solution, bf_cost = qubo_problem.brute_force_solution()    
 
     optimizer = COBYLA()
     p = 1  # QAOA circuit depth
@@ -104,6 +107,9 @@ def main():
 
     # Draw the most sampled
     # draw_solution(graph, solution)
+
+    print('BEST BITSTRING:', bf_solution)
+    print('BEST COST:', bf_cost)
 
 
 if __name__ == "__main__":
