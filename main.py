@@ -46,13 +46,15 @@ def main():
     # So, we have to mantain those variables binary and relax all the others. 
 
     # With Warm-Starting
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='Warm', initial_state='RY', regularization=0.25)
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, 
+    #                           mixer='Warm', initial_state='RY', regularization=0.25,
+    #                           fake_backend=True)
     
     # With LocicalX Mixer - This is not working yet
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
 
     # With mixer X - Standard formulation
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config)
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, fake_backend=False)
 
     # With mixer X - Standard formulation - using Metaheuristic 
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config,  Metaheuristic=True)
@@ -61,6 +63,7 @@ def main():
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, redundancy=True)
 
     # With VQE 
+    
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, VQE=True)
 
     qubo_problem.configure_variables()

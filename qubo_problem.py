@@ -6,6 +6,7 @@ from qiskit_algorithms import QAOA, SamplingVQE
 
 # from qiskit.primitives import Sampler
 from qiskit.primitives import BackendSampler
+from qiskit_ibm_runtime.fake_provider import FakeBrisbane, FakeKolkataV2
 from qiskit_algorithms.utils import algorithm_globals
 from qiskit_optimization.algorithms import WarmStartQAOAOptimizer
 from qiskit_aer import AerSimulator
@@ -57,6 +58,7 @@ class DCMST_QUBO:
         redundancy=False,
         VQE=False,
         Metaheuristic=False,
+        fake_backend = False
     ):
         """
         Initialize the QUBO for the Degree-Constrained Minimum Spanning Tree problem.
@@ -80,6 +82,7 @@ class DCMST_QUBO:
         self.epsilon = regularization
         self.redundancy = redundancy
         self.Metaheuristic = Metaheuristic
+        self.fake_backend = fake_backend
         self.num_qubits = 0
         self.var_names = None
 
@@ -333,8 +336,17 @@ class DCMST_QUBO:
 
     def configure_backend(self):
         if self.config.SIMULATION == "True":
-            print("Proceeding with simulation...")
-            backend = AerSimulator()
+            if not self.fake_backend:
+                print("Proceeding with simulation...")
+                backend = AerSimulator()
+            else:
+                print("Proceeding with simulation in Fake IBM_Brisbane using AerSimulator...")
+                service = QiskitRuntimeService(
+                    channel="ibm_quantum", token=self.config.QXToken
+                )                
+                real_backend = service.backend("ibm_brisbane")
+                
+                backend = AerSimulator.from_backend(real_backend)
             # backend = QasmSimulator()
             backend.set_options(seed_simulator=self.seed)
         else:
@@ -786,6 +798,71 @@ class DCMST_QUBO:
         self.objective_func_vals.append(cost)
 
         return cost + offset
+    
+    def time_execution_feasibility(self, backend):
+        # Retrieve backend properties
+        properties = backend.properties()
+
+        # Extract gate durations
+        gate_durations = {}
+        for gate in properties.gates:
+            gate_name = gate.gate
+            if gate.parameters:
+                duration = gate.parameters[0].value  # Duration in seconds
+                gate_durations[gate_name] = duration
+
+        print("Gate durations (in seconds):")
+        for gate, duration in gate_durations.items():
+            print(f"{gate}: {duration * 1e9:.2f} ns")
+
+        # Calculate total execution time
+        total_time = 0
+        for instruction, qargs, cargs in self.qaoa_circuit.data:
+            gate_name = instruction.name
+            gate_time = gate_durations.get(gate_name, 0)
+            total_time += gate_time
+
+        print(f"Total circuit execution time: {total_time * 1e6:.2f} µs")
+
+        # Extract coherence times with qubit indices
+        coherence_times = {}
+        for qubit_index, qubit in enumerate(properties.qubits):
+            T1 = None
+            T2 = None
+            for param in qubit:
+                if param.name == 'T1':
+                    T1 = param.value
+                elif param.name == 'T2':
+                    T2 = param.value
+            coherence_times[qubit_index] = {'T1': T1, 'T2': T2}
+            print(f"Qubit {qubit_index}: T1 = {T1*1e6:.2f} µs, T2 = {T2*1e6:.2f} µs")
+
+        # Access the layout to map virtual qubits to physical qubits
+        transpile_layout = self.qaoa_circuit._layout  # Note the underscore before 'layout'
+
+        layout = transpile_layout.final_layout
+        
+        # Retrieve the virtual-to-physical qubit mapping
+        virtual_to_physical = layout.get_virtual_bits()
+
+        # Determine which physical qubits are used in the circuit
+        used_physical_qubits = set(virtual_to_physical.values())
+
+        # Now, get the minimum T1 and T2 among the used physical qubits
+        min_T1 = min(coherence_times[q_index]['T1'] for q_index in used_physical_qubits)
+        min_T2 = min(coherence_times[q_index]['T2'] for q_index in used_physical_qubits)
+
+        # Compare execution time to thresholds
+        threshold_T1 = 0.1 * min_T1
+        threshold_T2 = 0.1 * min_T2
+
+        print(f"Thresholds: 10% T1 = {threshold_T1*1e6:.2f} µs, 10% T2 = {threshold_T2*1e6:.2f} µs")
+        print(f"Circuit execution time: {total_time*1e6:.2f} µs")
+
+        if total_time < threshold_T1 and total_time < threshold_T2:
+            print("Execution time is within acceptable limits.")
+        else:
+            print("Execution time may be too long; consider optimizing your circuit.")       
 
     def prepare_metaloss(self, optimizer, p=1, parameters=None):
         """
@@ -876,6 +953,12 @@ class DCMST_QUBO:
 
                 # Transpile the circuit
                 self.qaoa_circuit = pm.run(qaoa_mes)
+
+                if self.fake_backend or self.config.SIMULATION == False:
+                    try:
+                        self.time_execution_feasibility(backend)
+                    except:
+                        pass
 
                 estimator = Estimator(backend)
                 estimator.options.default_shots = 1000
@@ -1042,6 +1125,12 @@ class DCMST_QUBO:
 
                 # Transpile the circuit
                 self.qaoa_circuit = pm.run(qaoa_mes)
+
+                if self.fake_backend or self.config.SIMULATION == False:
+                    try:
+                        self.time_execution_feasibility(backend)
+                    except:
+                        pass
 
                 estimator = Estimator(backend)
                 estimator.options.default_shots = 1000
