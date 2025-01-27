@@ -836,6 +836,36 @@ class DCMST_QUBO:
 
         return cost + offset
     
+    def evaluate_bitstring_cost(self, bitstring: str) -> float:
+        """
+        Given a candidate bitstring (e.g. '010101'),
+        returns the objective value of that bitstring for this QUBO.
+        
+        Parameters:
+            bitstring (str): A string of '0'/'1' characters whose length 
+                            must match the total number of variables in self.qubo.
+
+        Returns:
+            float: The cost (objective value) evaluated at the bitstring.
+        """
+        # Convert each character in the bitstring to float 0.0 or 1.0
+        x = [float(b) for b in bitstring]
+
+        # Safety check: ensure bitstring length matches the number of QUBO variables
+        if len(x) != len(self.qubo.variables):
+            raise ValueError(
+                f"Bitstring length ({str(x)}) does not match the expected number "
+                f"of variables ({len(self.qubo.variables)}) in the QuadraticProgram."
+            )
+
+        # Evaluate the (unconstrained) objective function for this bitstring
+        converter = QuadraticProgramToQubo(penalty=self.P_I)
+        qubo_with_penalties = converter.convert(self.qubo)
+
+        cost = qubo_with_penalties.objective.evaluate(x)
+        return cost
+
+    
     def time_execution_feasibility(self, backend):
         # Retrieve backend properties
         properties = backend.properties()

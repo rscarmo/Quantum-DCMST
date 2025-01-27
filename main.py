@@ -42,18 +42,15 @@ def main():
     # Configure and solve the QUBO problem
 
     # With Warm-Starting
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, 
-                              mixer='Warm', initial_state='RY', regularization=0.16,
-                              fake_backend=False)
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, 
+    #                           mixer='Warm', initial_state='RY', regularization=0.16,
+    #                           fake_backend=False)
     
     # With LocicalX Mixer - This is not working yet
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
 
     # With mixer X - Standard formulation
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, fake_backend=False)
-
-    # With mixer X - Standard formulation - using Metaheuristic 
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config,  Metaheuristic=True)
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, fake_backend=False)
 
     # With mixer X - Standard formulation + redundant conditions
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, redundancy=True)
