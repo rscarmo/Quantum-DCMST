@@ -12,7 +12,7 @@ def main():
     config = Config()
 
     # Example usage:
-    N = 3
+    N = 4
     weight_range = (10, 100)
     seed = 51 #78
     max_degree = 2 
@@ -42,15 +42,15 @@ def main():
     # Configure and solve the QUBO problem
 
     # With Warm-Starting
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, 
-    #                           mixer='Warm', initial_state='RY', regularization=0.16,
-    #                           fake_backend=True)
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, 
+                              mixer='Warm', initial_state='RY', regularization=0.16,
+                              fake_backend=False)
     
     # With LocicalX Mixer - This is not working yet
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
 
     # With mixer X - Standard formulation
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, fake_backend=False)
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, fake_backend=False)
 
     # With mixer X - Standard formulation - using Metaheuristic 
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config,  Metaheuristic=True)
@@ -69,14 +69,12 @@ def main():
     qubo_problem.print_number_of_qubits()
 
     # Get a reference solution by brute force (only feasible for small problems between 20-25 variables!)
-    bf_solution, bf_cost = qubo_problem.brute_force_solution()    
+    # bf_solution, bf_cost = qubo_problem.brute_force_solution()    
 
     optimizer = COBYLA()
     p = 1  # QAOA circuit depth
 
-    optimal_params = qubo_problem.prepare_metaloss(optimizer, p)
-    print(optimal_params)
-    # optimal_params = qubo_problem.solve_problem(optimizer, p)
+    optimal_params = qubo_problem.solve_problem(optimizer, p)
     samples = qubo_problem.qubo_sample(optimal_params)
 
 
@@ -99,8 +97,8 @@ def main():
     # Draw the most sampled
     # draw_solution(graph, solution)
 
-    print('BEST BITSTRING:', bf_solution)
-    print('BEST COST:', bf_cost)
+    # print('BEST BITSTRING:', bf_solution)
+    # print('BEST COST:', bf_cost)
 
 
 if __name__ == "__main__":

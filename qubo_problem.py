@@ -947,11 +947,11 @@ class DCMST_QUBO:
 
                 self.mixer = self.mixer_warm(thetas)
                 self.initial_state = self.initial_state_RY(thetas)
+                self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
             elif self.mixer == "LogicalX":
                 self.initial_state = self.initial_state_OHE()
                 self.mixer = self.mixer_customized()
-
-            self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
+                self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
 
             qaoa_mes = QAOAAnsatz(
                 cost_operator=qubo_ops,
@@ -1000,6 +1000,7 @@ class DCMST_QUBO:
                 sampler=sampler,
                 ansatz=ansatz,
                 optimizer=optimizer,
+                initial_point=initial_parameters,
                 callback=callback,  # if you have a callback function defined
             )
 
@@ -1094,11 +1095,12 @@ class DCMST_QUBO:
 
                 self.mixer = self.mixer_warm(thetas)
                 self.initial_state = self.initial_state_RY(thetas)
+                self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
+
             elif self.mixer == "LogicalX":
                 self.initial_state = self.initial_state_OHE()
                 self.mixer = self.mixer_customized()
-
-            self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
+                self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
 
             qaoa_mes = QAOAAnsatz(
                 cost_operator=qubo_ops,
