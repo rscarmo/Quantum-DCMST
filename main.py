@@ -41,13 +41,9 @@ def main():
 
     # Configure and solve the QUBO problem
 
-    # This warm_start=True is for using the built-in function from Qiskit to solve a Qubo problem using warm-start techinique
-    # Here for this kind of problem this does not work, because if we relax the x variables, the problem becomes non-convex. 
-    # So, we have to mantain those variables binary and relax all the others. 
-
     # With Warm-Starting
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, 
-    #                           mixer='Warm', initial_state='RY', regularization=0.25,
+    #                           mixer='Warm', initial_state='RY', regularization=0.16,
     #                           fake_backend=True)
     
     # With LocicalX Mixer - This is not working yet
@@ -63,7 +59,6 @@ def main():
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, redundancy=True)
 
     # With VQE 
-
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, VQE=True)
 
     qubo_problem.configure_variables()
@@ -79,14 +74,10 @@ def main():
     optimizer = COBYLA()
     p = 1  # QAOA circuit depth
 
-    # When metaheuristic = False, this function uses Cobyla as optimizer, solves the problem and returns the samples.
-    # samples = qubo_problem.solve_problem(optimizer, p)
-    optimal_params = qubo_problem.solve_problem(optimizer, p)
+    optimal_params = qubo_problem.prepare_metaloss(optimizer, p)
+    print(optimal_params)
+    # optimal_params = qubo_problem.solve_problem(optimizer, p)
     samples = qubo_problem.qubo_sample(optimal_params)
-    
-    # When metaheuristic = True, this function receives parameters and returns the cost/loss value.
-    # parameters = np.random.random(qubo_problem.num_qubits)
-    # samples = qubo_problem.solve_problem(optimizer, p, parameters=parameters)
 
 
     # It seems to me that the best result considered by qiskit only takes into 

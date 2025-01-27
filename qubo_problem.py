@@ -54,10 +54,8 @@ class DCMST_QUBO:
         initial_state=None,
         regularization=0,
         seed=42,
-        warm_start=False,
         redundancy=False,
         VQE=False,
-        Metaheuristic=False,
         fake_backend = False
     ):
         """
@@ -77,11 +75,9 @@ class DCMST_QUBO:
         self.mixer = mixer
         self.initial_state = initial_state
         self.seed = seed
-        self.warm_start = warm_start
         self.VQE = VQE
         self.epsilon = regularization
         self.redundancy = redundancy
-        self.Metaheuristic = Metaheuristic
         self.fake_backend = fake_backend
         self.num_qubits = 0
         self.var_names = None
@@ -922,11 +918,6 @@ class DCMST_QUBO:
         backend = self.configure_backend()
         sampler = BackendSampler(backend=backend)
 
-        # sampler = Sampler(
-        #     session= backend.service,
-        #     options={"backend": backend.name}  # or whichever device name
-        # )
-
         # Define a callback function to track progress
         def callback(params):
             print(f"Current parameters: {params}")
@@ -941,78 +932,57 @@ class DCMST_QUBO:
         # Generate initial parameters using the seed
         initial_params = np.random.uniform(0, 2 * np.pi, 2 * p)
         if not self.VQE:
-            if (self.mixer is not None) and (self.initial_state is not None):
-                if self.mixer == "Warm":
-                    print(self.qubo.prettyprint())
-                    qp = self.relax_problem(qubo)
-                    print(qp.prettyprint())
-                    sol = CplexOptimizer().solve(qp)
-                    print(sol.prettyprint())
-                    c_stars = sol.samples[0].x
+            if self.mixer == "Warm":
+                print(self.qubo.prettyprint())
+                qp = self.relax_problem(qubo)
+                print(qp.prettyprint())
+                sol = CplexOptimizer().solve(qp)
+                print(sol.prettyprint())
+                c_stars = sol.samples[0].x
 
-                    # Example usage:
-                    thetas = [self.compute_theta(c_star) for c_star in c_stars]
+                # Example usage:
+                thetas = [self.compute_theta(c_star) for c_star in c_stars]
 
-                    print(thetas)
+                print(thetas)
 
-                    self.mixer = self.mixer_warm(thetas)
-                    self.initial_state = self.initial_state_RY(thetas)
-                elif self.mixer == "LogicalX":
-                    self.initial_state = self.initial_state_OHE()
-                    self.mixer = self.mixer_customized()
+                self.mixer = self.mixer_warm(thetas)
+                self.initial_state = self.initial_state_RY(thetas)
+            elif self.mixer == "LogicalX":
+                self.initial_state = self.initial_state_OHE()
+                self.mixer = self.mixer_customized()
 
-                self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
-            else:
-                qaoa_mes = QAOA(
-                    sampler=sampler,
-                    optimizer=optimizer,
-                    reps=p,
-                    initial_point=initial_params,
-                    callback=callback,
-                )
-                if self.warm_start:
-                    qaoa_mes = WarmStartQAOAOptimizer(
-                        pre_solver=CplexOptimizer(),
-                        relax_for_pre_solver=True,
-                        qaoa=qaoa_mes,
-                        epsilon=0.0,
-                        penalty=self.P_I,
-                    )
+            self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
 
-            if not self.warm_start:
-                # qaoa = MinimumEigenOptimizer(qaoa_mes, penalty=self.P_I)
-                qaoa_mes = QAOAAnsatz(
-                    cost_operator=qubo_ops,
-                    reps=p,
-                    mixer_operator=self.mixer,
-                    initial_state=self.initial_state,
-                )
-                qaoa_mes.measure_all()
+            qaoa_mes = QAOAAnsatz(
+                cost_operator=qubo_ops,
+                reps=p,
+                mixer_operator=self.mixer,
+                initial_state=self.initial_state,
+            )
+            qaoa_mes.measure_all()
 
-                # Create a custom pass manager
-                pm = generate_preset_pass_manager(optimization_level=3, backend=backend)
+            # Create a custom pass manager
+            pm = generate_preset_pass_manager(optimization_level=3, backend=backend)
 
-                # Transpile the circuit
-                self.qaoa_circuit = pm.run(qaoa_mes)
+            # Transpile the circuit
+            self.qaoa_circuit = pm.run(qaoa_mes)
 
-                if self.fake_backend or self.config.SIMULATION == False:
-                    try:
-                        self.time_execution_feasibility(backend)
-                    except:
-                        pass
+            if self.fake_backend or self.config.SIMULATION == False:
+                try:
+                    self.time_execution_feasibility(backend)
+                except:
+                    pass
 
-                estimator = Estimator(backend)
-                estimator.options.default_shots = 1000
+            estimator = Estimator(backend)
+            estimator.options.default_shots = 1000
 
-                if self.config.SIMULATION == False:
-                    # Set simple error suppression/mitigation options
-                    estimator.options.dynamical_decoupling.enable = True
-                    estimator.options.dynamical_decoupling.sequence_type = "XY4"
-                    estimator.options.twirling.enable_gates = True
-                    estimator.options.twirling.num_randomizations = "auto"
+            if self.config.SIMULATION == False:
+                # Set simple error suppression/mitigation options
+                estimator.options.dynamical_decoupling.enable = True
+                estimator.options.dynamical_decoupling.sequence_type = "XY4"
+                estimator.options.twirling.enable_gates = True
+                estimator.options.twirling.num_randomizations = "auto"
 
-            else:
-                qaoa = qaoa_mes
         else:
             # Build the parameterized ansatz for VQE
             from qiskit.circuit.library import TwoLocal
@@ -1061,25 +1031,27 @@ class DCMST_QUBO:
                 state: int(round(prob * shots)) for state, prob in float_counts.items()
             }
 
-            # Return or store them
-            print(counts)
-            # return counts
+        # Return or store them
+        print(counts)
+        # return counts
 
-            # qaoa_result = minimize(
-            #     self.cost_func_estimator,
-            #     initial_params,
-            #     args=(self.qaoa_circuit, qubo_ops, estimator, offset),
-            #     method="COBYLA",
-            #     tol=1e-2,
-            #     callback=callback
-            # )
+        # qaoa_result = minimize(
+        #     self.cost_func_estimator,
+        #     initial_params,
+        #     args=(self.qaoa_circuit, qubo_ops, estimator, offset),
+        #     method="COBYLA",
+        #     tol=1e-2,
+        #     callback=callback
+        # )
 
-            def _fn(params):
-                return self.cost_func_estimator(
-                    params, self.qaoa_circuit, qubo_ops, estimator, offset
-                )
-
-            return _fn
+        def _fn(params):
+            params = np.array(params).flatten()
+            l = self.cost_func_estimator(
+                params, self.qaoa_circuit, qubo_ops, estimator, offset
+            )
+            # print(f"Cost: {l}")
+            return l
+        return _fn
 
     def solve_problem(self, optimizer, p=1, parameters=None):
         # Convert the problem with constraints into an unconstrained QUBO
@@ -1092,12 +1064,6 @@ class DCMST_QUBO:
         qubo_ops, offset = qubo.to_ising()
 
         backend = self.configure_backend()
-        sampler = BackendSampler(backend=backend)
-
-        # sampler = Sampler(
-        #     session= backend.service,
-        #     options={"backend": backend.name}  # or whichever device name
-        # )
 
         # Define a callback function to track progress
         def callback(params):
@@ -1113,81 +1079,61 @@ class DCMST_QUBO:
         # Generate initial parameters using the seed
         initial_params = np.random.uniform(0, 2 * np.pi, 2 * p)
         if not self.VQE:
-            if (self.mixer is not None) and (self.initial_state is not None):
-                if self.mixer == "Warm":
-                    print(self.qubo.prettyprint())
-                    qp = self.relax_problem(qubo)
-                    print(qp.prettyprint())
-                    sol = CplexOptimizer().solve(qp)
-                    print(sol.prettyprint())
-                    c_stars = sol.samples[0].x
+            if self.mixer == "Warm":
+                print(self.qubo.prettyprint())
+                qp = self.relax_problem(qubo)
+                print(qp.prettyprint())
+                sol = CplexOptimizer().solve(qp)
+                print(sol.prettyprint())
+                c_stars = sol.samples[0].x
 
-                    # Example usage:
-                    thetas = [self.compute_theta(c_star) for c_star in c_stars]
+                # Example usage:
+                thetas = [self.compute_theta(c_star) for c_star in c_stars]
 
-                    print(thetas)
+                print(thetas)
 
-                    self.mixer = self.mixer_warm(thetas)
-                    self.initial_state = self.initial_state_RY(thetas)
-                elif self.mixer == "LogicalX":
-                    self.initial_state = self.initial_state_OHE()
-                    self.mixer = self.mixer_customized()
+                self.mixer = self.mixer_warm(thetas)
+                self.initial_state = self.initial_state_RY(thetas)
+            elif self.mixer == "LogicalX":
+                self.initial_state = self.initial_state_OHE()
+                self.mixer = self.mixer_customized()
 
-                self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
-            else:
-                qaoa_mes = QAOA(
-                    sampler=sampler,
-                    optimizer=optimizer,
-                    reps=p,
-                    initial_point=initial_params,
-                    callback=callback,
-                )
-                if self.warm_start:
-                    qaoa_mes = WarmStartQAOAOptimizer(
-                        pre_solver=CplexOptimizer(),
-                        relax_for_pre_solver=True,
-                        qaoa=qaoa_mes,
-                        epsilon=0.0,
-                        penalty=self.P_I,
-                    )
+            self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
 
-            if not self.warm_start:
-                # qaoa = MinimumEigenOptimizer(qaoa_mes, penalty=self.P_I)
-                qaoa_mes = QAOAAnsatz(
-                    cost_operator=qubo_ops,
-                    reps=p,
-                    mixer_operator=self.mixer,
-                    initial_state=self.initial_state,
-                )
-                qaoa_mes.measure_all()
+            qaoa_mes = QAOAAnsatz(
+                cost_operator=qubo_ops,
+                reps=p,
+                mixer_operator=self.mixer,
+                initial_state=self.initial_state,
+            )
+            qaoa_mes.measure_all()
 
-                # Create a custom pass manager
-                pm = generate_preset_pass_manager(optimization_level=3, backend=backend)
+            # Create a custom pass manager
+            pm = generate_preset_pass_manager(optimization_level=3, backend=backend)
 
-                # Transpile the circuit
-                self.qaoa_circuit = pm.run(qaoa_mes)
+            # Transpile the circuit
+            self.qaoa_circuit = pm.run(qaoa_mes)
 
-                if self.fake_backend or self.config.SIMULATION == False:
-                    try:
-                        self.time_execution_feasibility(backend)
-                    except:
-                        pass
+            if self.fake_backend or self.config.SIMULATION == False:
+                try:
+                    self.time_execution_feasibility(backend)
+                except:
+                    pass
 
-                estimator = Estimator(backend)
-                estimator.options.default_shots = 1000
+            estimator = Estimator(backend)
+            estimator.options.default_shots = 1000
 
-                if self.config.SIMULATION == False:
-                    # Set simple error suppression/mitigation options
-                    estimator.options.dynamical_decoupling.enable = True
-                    estimator.options.dynamical_decoupling.sequence_type = "XY4"
-                    estimator.options.twirling.enable_gates = True
-                    estimator.options.twirling.num_randomizations = "auto"
-
-            else:
-                qaoa = qaoa_mes
+            if self.config.SIMULATION == False:
+                # Set simple error suppression/mitigation options
+                estimator.options.dynamical_decoupling.enable = True
+                estimator.options.dynamical_decoupling.sequence_type = "XY4"
+                estimator.options.twirling.enable_gates = True
+                estimator.options.twirling.num_randomizations = "auto"
         else:
             # Build the parameterized ansatz for VQE
             from qiskit.circuit.library import TwoLocal
+
+            sampler = BackendSampler(backend=backend)            
 
             ansatz = TwoLocal(
                 len(self.qubo.variables),
@@ -1202,6 +1148,7 @@ class DCMST_QUBO:
                 sampler=sampler,
                 ansatz=ansatz,
                 optimizer=optimizer,
+                initial_point=initial_parameters,
                 callback=callback,  # if you have a callback function defined
             )
 
