@@ -85,8 +85,9 @@ class DCMST_QUBO:
         self.objective_func_vals = []
         self.qaoa_circuit = None
 
-        self.max_degree = self.degree_constraints.get(self.n - 1, self.n - 1)
-        self.binary_bits = int(np.ceil(np.log2(self.max_degree + 1)))
+        self.max_degree = self.degree_constraints.get(self.n - 1, self.n - 1)   
+        #I need to sum 1, to not over use qubits. This is the correct way to do it
+        self.binary_bits = int(np.ceil(np.log2(self.max_degree + 1))) # binary_bits is the k
         # Define the penalty coefficient
         num_vertices = self.n
         m = max(data["weight"] for _, _, data in self.G.edges(data=True))
@@ -278,10 +279,8 @@ class DCMST_QUBO:
 
             # Number of standard binary bits
 
-            # -----------------------------
-            #  1) Construct z_v as:
-            #     z_v = sum_{i=0}^{k-1} 2^i z_{v,i} + (Delta+1 - 2^k)*z_{v,k}
-            # -----------------------------
+            # Construct z_v as:
+            # z_v = sum_{i=0}^{k-1} 2^i z_{v,i} + (Delta+1 - 2^k)*z_{v,k}
             all_terms = {}
 
             # (A) Standard bits (0..k-1)
@@ -297,11 +296,8 @@ class DCMST_QUBO:
                 (self.max_degree + 1) - 2 ** (self.binary_bits - 1)
             )
 
-            # -----------------------------
-            #  2) Subtract edges so that
-            #     [z_v] - [sum of edges] = 0
-            # -----------------------------
-
+            # Subtract edges so that
+            # [z_v] - [sum of edges] = 0
             if v == self.root:
                 # Root node: only outgoing edges e_{root,u}
                 for u in self.G.neighbors(self.root):
@@ -323,9 +319,7 @@ class DCMST_QUBO:
                             all_terms.get(edge_out_name, 0.0) - 1.0
                         )
 
-            # -----------------------------
-            #  3) Enforce equality: z_v - sum_of_edges = 0
-            # -----------------------------
+            # Enforce equality: z_v - sum_of_edges = 0
             self.qubo.linear_constraint(
                 linear=all_terms, sense="==", rhs=0.0, name=f"degree_constraint_{v}"
             )
@@ -520,27 +514,7 @@ class DCMST_QUBO:
                 valid_bitstrings.append(bitstring)
 
         return valid_bitstrings
-
-    def generate_z_states(self):
-        """
-        Gera a lista de estados binários permitidos para as variáveis z_v,i,
-        baseando-se no valor de delta.
-
-        Retorna:
-        List[str]: Lista de estados binários permitidos.
-        """
-        # Número de bits necessários para representar z_v
-        n_bits = (self.max_degree).bit_length()  # ceil(log2(delta + 1))
-
-        # Gera todos os estados possíveis com n_bits, mas limitados de 0 a delta
-        all_states = [
-            format(
-                i, f"0{n_bits}b"
-            )  # Formata o número como uma string binária de n_bits
-            for i in range(self.max_degree + 1)  # Inclui apenas valores de 0 a delta
-        ]
-
-        return all_states
+    
 
     def generate_states_excluding_specific(self, n_qubits, exclude_state):
         """
@@ -625,15 +599,6 @@ class DCMST_QUBO:
                     self.groups_e_uv.append(group_e_uv)
                 else:
                     group_e_uv = []
-
-            elif "z" in variable.name:
-                if idx not in group_z_i:
-                    for i in range(self.binary_bits):
-                        group_z_i.append(idx + i)
-                    self.groups_z_i.append(group_z_i)
-                    # init_qc = self.prepare_superposition(init_qc, self.valid_z_i_states, group_z_i)
-                else:
-                    group_z_i = []
             elif "x" in variable.name:
                 self.group_x.append(idx)
 
@@ -787,36 +752,9 @@ class DCMST_QUBO:
         for ids in self.group_x:
             mixer_circuit.rx(-2 * beta, ids)
 
-        # filtered_row = df[df['states'] == str(self.valid_x_states)]
-        # if len(self.group_x) == 1:
-        #     mixer_circuit.rx(-2*beta, self.group_x)
-        # else:
-        #     if not filtered_row.empty:  # Verificar se encontrou o estado
-        #         hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
-        #         print(hamiltonian, self.group_x)
-
-        #         # Chamar a função mixer_LogicalX com os dados encontrados
-        #         mixer_circuit = self.mixer_LogicalX(hamiltonian, self.group_x, beta, mixer_circuit)
-
-        #     else:
-        #         print(f"Estado {self.valid_x_states} referente às variaveis x_uv não encontrado no arquivo CSV.")
-        #         sys.exit()
-
         # For the z_vi
-        # Needs to search in the hamiltonian_mixers.cvs using the valid_states
         for ids in self.groups_z_i:
             mixer_circuit.rx(-2 * beta, ids)
-            # filtered_row = df[df['states'] == str(self.valid_z_i_states)]
-            # print('AQUI ESTÃO OS ESTADOS VÁLIDOS DE Z:', self.valid_z_i_states)
-            # if not filtered_row.empty:  # Verificar se encontrou o estado
-            #     hamiltonian = eval(filtered_row.iloc[0]['hamiltonian'])  # Avaliar o Hamiltoniano como objeto Python
-            #     print(hamiltonian, ids)
-
-            #     # Chamar a função mixer_LogicalX com os dados encontrados
-            #     mixer_circuit = self.mixer_LogicalX(hamiltonian, ids, beta, mixer_circuit)
-            # else:
-            #     print(f"Estado {self.valid_x_states} referente às variaveis z_vi não encontrado no arquivo CSV.")
-            #     sys.exit()
 
         return mixer_circuit
 
@@ -1215,7 +1153,7 @@ class DCMST_QUBO:
             # Return or store them
             print(counts)
             return counts
-
+    
         start_time = time.time()
         # qaoa_result = qaoa.solve(self.qubo)
         qaoa_result = minimize(
@@ -1234,6 +1172,63 @@ class DCMST_QUBO:
         print(f"Execution time: {self.execution_time} seconds")
 
         return qaoa_result.x
+    
+    def qubo_build_circuit(self, p=1, parameters=None):
+        # Convert the problem with constraints into an unconstrained QUBO
+        converter = QuadraticProgramToQubo(penalty=self.P_I)
+        qubo = converter.convert(self.qubo)
+
+        # Print the Ising model
+        print(qubo.to_ising())
+
+        qubo_ops, offset = qubo.to_ising()
+
+        backend = self.configure_backend()
+
+        # Set up QAOA with the callback
+
+        np.random.seed(self.seed)
+
+        # Define the seed that will be used in the optimization process
+        algorithm_globals.random_seed = self.seed
+
+        # Generate initial parameters using the seed
+        if not self.VQE:
+            if self.mixer == "Warm":
+                print(self.qubo.prettyprint())
+                qp = self.relax_problem(qubo)
+                print(qp.prettyprint())
+                sol = CplexOptimizer().solve(qp)
+                print(sol.prettyprint())
+                c_stars = sol.samples[0].x
+
+                # Example usage:
+                thetas = [self.compute_theta(c_star) for c_star in c_stars]
+
+                print(thetas)
+
+                self.mixer = self.mixer_warm(thetas)
+                self.initial_state = self.initial_state_RY(thetas)
+                self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
+
+            elif self.mixer == "LogicalX":
+                self.initial_state = self.initial_state_OHE()
+                self.mixer = self.mixer_customized()
+                self.mixer.draw(output="mpl").savefig("mixer_circuit.png")
+
+            qaoa_mes = QAOAAnsatz(
+                cost_operator=qubo_ops,
+                reps=p,
+                mixer_operator=self.mixer,
+                initial_state=self.initial_state,
+            )
+            qaoa_mes.measure_all()
+
+            # Create a custom pass manager
+            pm = generate_preset_pass_manager(optimization_level=3, backend=backend)
+
+            # Transpile the circuit
+            self.qaoa_circuit = pm.run(qaoa_mes)        
 
     def qubo_sample(self, optimal_params):
         backend = self.configure_backend()

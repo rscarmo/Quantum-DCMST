@@ -8,6 +8,7 @@ import numpy as np
 import csv
 import pickle
 import os
+import pandas as pd
 
 
 def load_cache(cache_file='brute_force_cache.pkl'):
@@ -75,7 +76,7 @@ def main():
         for N in range(3,5):
             if N==3 and max_degree == 3:
                 continue
-            for i in range(10):
+            for i in range(5):
                 seed = 51 + i               
                 for p in range(1,6):    
                     # Define the unique key for the current graph configuration
@@ -130,13 +131,50 @@ def main():
                     qubo_problem.print_number_of_qubits()
 
                     # Retrieve or compute the brute-force solution - feasible for <=20 variables
-                    bf_solution, bf_cost = get_brute_force_solution(qubo_problem, key, solutions_brute_force)                   
+                    bf_solution, bf_cost = None, None #get_brute_force_solution(qubo_problem, key, solutions_brute_force)                   
 
                     optimizer = COBYLA()
+                    # optimal_params = qubo_problem.solve_problem(optimizer, p)
 
-                    optimal_params = qubo_problem.solve_problem(optimizer, p)
+                    # -------------------------------------------------------------------------------------------
+                    # Apenas amostragem usando os parâmetros já otimizados
+                    qubo_problem.qubo_build_circuit(p)
+
+                    df_func_X = pd.read_csv('all_params_with_metadata.csv')
+                    # Agrupando e mantendo apenas best_params únicos
+                    # unique_best_params = (
+                    #     df_func_X.groupby(['seed_grafo', 'Num_Nos', 'num_layer', 'Delta'], as_index=False)
+                    #     .agg({'best_params': 'first'})  # Mantém o primeiro 'best_params' único por grupo
+                    # )
+                    # Filtrar o dataframe com base nos valores específicos
+                    filtered_row = df_func_X[
+                        (df_func_X['seed'] == seed) &
+                        (df_func_X['N'] == N) &
+                        (df_func_X['p'] == p) &
+                        (df_func_X['max'] == max_degree)
+                    ]
+
+                    if filtered_row.empty:
+                        print("Nenhuma linha encontrada para os critérios fornecidos.")
+                        continue
+
+                    # Selecionar apenas as colunas que contenham "params"
+                    params_columns = [col for col in df_func_X.columns if "params" in col]
+                    
+                    # Extrair os valores e converter para um array do NumPy
+                    optimal_params = filtered_row[params_columns].values.flatten()
+
+                    # Remover valores NaN
+                    optimal_params = optimal_params[~np.isnan(optimal_params)]                    
+
+                    # optimal_params = filtered_row.iloc[0]['best_params']  # Acessa o primeiro (e único) resultado
+                    print(f"Parâmetros encontrados: {optimal_params}")
+                    # -------------------------------------------------------------------------------------------
+
+                    # optimal_params = np.fromstring(optimal_params.strip("[]"), sep=" ")
+
                     samples = qubo_problem.qubo_sample(optimal_params)
-                    with open("qaoa_dcmst_results_3_4_X_complete.csv", mode="a", newline="") as file:
+                    with open("qaoa_dcmst_results_3_4_X_PSO_complete.csv", mode="a", newline="") as file:
                         writer = csv.writer(file)
                         
                         # Escrever o cabeçalho se o arquivo está vazio
@@ -162,7 +200,7 @@ def main():
                     )    
 
                     if valid_solutions == []:
-                        with open("qaoa_dcmst_results_3_4_X.csv", mode="a", newline="") as file:
+                        with open("qaoa_dcmst_results_3_4_X_PSO.csv", mode="a", newline="") as file:
                             writer = csv.writer(file)
                             
                             # Escrever o cabeçalho se o arquivo está vazio
@@ -171,11 +209,11 @@ def main():
                                                 "MST_Rank", "MST_cost", "MST_correct", "correct_cost", 
                                                 "best_params", "Num_Nos", "Delta", "FakeKolkataV2"])
                             
-                            writer.writerow(['X', 'N', seed, p, 'Nenhuma solução válida', 0, 0, '', dcmst_edges,
+                            writer.writerow(['warm', 'N', seed, p, 'Nenhuma solução válida', 0, 0, '', dcmst_edges,
                                             dcmst_cost, '', N, max_degree, False])    
                     else:
                         # Configurar o arquivo CSV e escrever os resultados
-                        with open("qaoa_dcmst_results_3_4_X.csv", mode="a", newline="") as file:
+                        with open("qaoa_dcmst_results_3_4_X_PSO.csv", mode="a", newline="") as file:
                             writer = csv.writer(file)
                             
                             # Escrever o cabeçalho se o arquivo está vazio
@@ -185,11 +223,11 @@ def main():
                                                 "best_params", "Num_Nos", "Delta", "FakeKolkataV2"])
                                 
                             # Escrever cada MST mais frequente no CSV
-                            for i, (mst, frequency) in enumerate(valid_solutions, start=1):
+                            for i, (mst, frequency, *_) in enumerate(valid_solutions, start=1):
                                 mst_no_tensor = [(u, v, weight.item() if hasattr(weight, "item") else weight) for u, v, weight in mst]
                                 cost = sum(adj_matrix[u][v] for u, v, weight in mst_no_tensor)
                                 
-                                writer.writerow(['X', 'N', seed, p, mst_no_tensor, frequency, 
+                                writer.writerow(['warm', 'N', seed, p, mst_no_tensor, frequency, 
                                                 i, cost, dcmst_edges, dcmst_cost, optimal_params, N, max_degree, False])
 
 if __name__ == "__main__":

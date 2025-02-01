@@ -4,6 +4,7 @@ import networkx as nx
 import itertools
 import numpy as np
 import math
+import pdb
 
 
 def sample_to_dict(sample, var_names):
@@ -22,6 +23,48 @@ def sample_to_dict(sample, var_names):
             name: int(val)
             for name, val in zip(var_names, sample)
         }        
+
+def compute_F_I_1(x_vars, N, v0):
+    """
+    Calcula a soma:
+
+       sum_{1 <= u < v < w <= N,  u,v,w != v0} (x_{u,w} + x_{u,v}x_{v,w} - x_{u,v}x_{u,w} - x_{u,w}x_{v,w})
+
+    x_vars é o dicionário {(u,v): x_uv} já carregado. 
+    N é o número total de vértices.
+    v0 é o vértice que deve ser excluído da soma.
+    """
+    sum_expr = 0
+
+    # Percorre todas as triplas (u, v, w) com u < v < w
+    for u in range(N):
+        # pula se u == v0
+        if u == v0:
+            continue
+
+        for v in range(u+1, N):
+            # pula se v == v0
+            if v == v0:
+                continue
+
+            for w in range(v+1, N):
+                # pula se w == v0
+                if w == v0:
+                    continue
+
+                # Recupera x_{u,w}, x_{u,v}, x_{v,w}
+                # Lembrando que x_vars[(p, q)] está definido apenas se p < q
+                x_uw = x_vars.get((u,w), 0)
+                x_uv = x_vars.get((u,v), 0)
+                x_vw = x_vars.get((v,w), 0)
+
+                # Soma o termo do F_{I,1}(x)
+                sum_expr += (x_uw 
+                             + x_uv*x_vw 
+                             - x_uv*x_uw 
+                             - x_uw*x_vw)
+
+    return sum_expr
 
 def interpret_solution(solution_dict, adj_matrix, N, Delta):
     """
@@ -64,6 +107,22 @@ def interpret_solution(solution_dict, adj_matrix, N, Delta):
 
         z_values[v] = z_v
 
+    x_variables = {}
+    for u in range(N):
+        for v in range(u + 1, N):
+            if adj_matrix[u, v] <= 0:
+                continue
+
+            x_uv_name = f"x_{u}_{v}"
+            x_uv = solution_dict.get(x_uv_name, 0)        
+            x_variables[(u,v)] = x_uv
+            
+
+    F_val = compute_F_I_1(x_variables, N, v0=0)
+
+    if F_val > 0:
+        return None    
+
     # 2) Reconstruct edges based on e_{u,v} and x_{u,v} variables
     mst_edges = []
     for u in range(N):
@@ -105,6 +164,10 @@ def interpret_solution(solution_dict, adj_matrix, N, Delta):
                 mst_edges.append((u, v, weight))
                 mst_graph.add_edge(u, v, weight=weight)
                 added_edges.add((u, v))
+            elif (e_uv == e_vu == 1) or not ((e_uv == 1 and x_uv == 1) or 
+                                             (e_vu == 1 and x_uv == 0) or 
+                                             e_uv == e_vu == 0):
+                return None
 
     # 3) Check if we formed a valid MST
     #    (connected and exactly N-1 edges)
@@ -112,60 +175,100 @@ def interpret_solution(solution_dict, adj_matrix, N, Delta):
         # Optional: Verify the actual degree vs. z_v
         actual_degrees = [mst_graph.degree[v] for v in range(N)]
         for v in range(N):
-            if actual_degrees[v] > z_values[v]:
+            if actual_degrees[v] != z_values[v]:
                 # Mismatch: MST says we have actual_degrees[v], but z_v is smaller
                 # print(f'Actual degree: {actual_degrees[v]}, z_v:{z_values[v]}')
                 return None
             if actual_degrees[v] > Delta:
                 # The MST itself violates the maximum degree constraint
                 return None
+        # print(solution_dict)
         return mst_edges  # Valid MST solution
     else:
         return None  # Not a valid MST
 
 
-def sample_and_plot_histogram(samples, adj_matrix, N, Delta, interpret_solution_fn, top_n=30, var_names=None):
+import matplotlib.pyplot as plt
+from collections import defaultdict
+
+def sample_and_plot_histogram(samples, adj_matrix, N, Delta, interpret_solution_fn,
+                              top_n=30, var_names=None, v0=None):
     """
     Interpret QUBO samples, validate solutions, and plot a histogram of the most sampled valid bitstrings.
 
     Parameters:
-    - samples: Dictionary of bitstrings (keys) and their frequencies (values) from Qiskit.
-    - adj_matrix: Adjacency matrix of the graph.
-    - N: Number of nodes in the graph.
-    - Delta: Maximum degree constraint.
-    - interpret_solution_fn: Function to interpret and validate a bitstring as an MST.
-    - top_n: Number of most common solutions to display in the histogram.
+    - samples: Dictionary de {bitstring: frequency} vindo do Qiskit (ou outro sampler).
+    - adj_matrix: Matriz de adjacência do grafo.
+    - N: Número de nós do grafo.
+    - Delta: Restrição de grau máximo (se aplicável).
+    - interpret_solution_fn: Função que, dado um dicionário de variáveis -> valores, 
+      retorne a solução interpretada (por exemplo, um conjunto de arestas MST).
+    - top_n: Número de soluções mais comuns para mostrar no histograma.
+    - var_names: Lista/ordem de variáveis, caso seja preciso mapear bits do bitstring.
+    - v0: (opcional) se precisar excluir ou tratar um vértice específico, etc.
 
     Returns:
-    - most_common_valid_solutions: List of the most common valid solutions (up to `top_n`).
+    - most_common_valid_solutions: Lista das soluções mais comuns (até `top_n`),
+      onde cada item é (edges_solution, freq, [lista de bitstrings]).
     """
-    # Step 1: Interpret and validate solutions
-    valid_solutions = []
-    for sample in samples:
-        # Convert sample -> dictionary
-        solution_dict = sample_to_dict(sample, var_names)
-        converted_dict = {
-            var.name: val for var, val in solution_dict.items()
-        }        
+    
+    # -------------------------------------------------------------------------
+    # 1) Agregador para as soluções válidas: soma de frequências e bitstrings
+    # -------------------------------------------------------------------------
+    aggregated_solutions = defaultdict(lambda: {"freq": 0, "bitstrings": []})
+    
+    for bitstring, frequency in samples.items():
+        # 1.1) Convertemos o bitstring em dicionário var->valor
+        solution_dict = sample_to_dict(bitstring, var_names)
+        converted_dict = {var.name: val for var, val in solution_dict.items()}
 
-        # Now call the dictionary-based function
+        if bitstring == '10010000110010010110':
+            print('paroooooo')           
+
+        # 1.2) Interpretamos a solução (por ex, extrair arestas do MST)
         mst_solution = interpret_solution_fn(converted_dict, adj_matrix, N, Delta)
-        if mst_solution is not None:
-            valid_solutions.append(tuple(sorted(mst_solution)))
+        
+        # Se a função interpretou e validou de fato (pode conter None se inválida)
+        # 'mst_solution' aqui deve ser algo como uma lista de edges (u,v,w)
+        if mst_solution and all(e is not None for e in mst_solution):
+            # Ordene as arestas para ter uma chave única que identifique a solução
+            edges_tuple = tuple(sorted(mst_solution))
+            
+            # 1.3) Acumule na nossa estrutura
+            # Frequência multiplicada se você quiser "ampliar" a escala.
+            # Usando frequency*10000 como no seu exemplo:
+            freq_scaled = frequency * 10000
+            aggregated_solutions[edges_tuple]["freq"] += freq_scaled
+            aggregated_solutions[edges_tuple]["bitstrings"].append(bitstring)
 
-    if not valid_solutions:
+    if not aggregated_solutions:
         print("No valid MST solutions were found.")
         return []
 
-    # Step 2: Count frequencies of valid solutions
-    solution_counts = Counter(valid_solutions)
+    # -------------------------------------------------------------------------
+    # 2) Ordenar as soluções por frequência (decrescente) e pegar top_n
+    # -------------------------------------------------------------------------
+    # aggregated_solutions.items() = [(edges_tuple, {"freq": X, "bitstrings": [...]})]
+    sorted_agg = sorted(
+        aggregated_solutions.items(),
+        key=lambda item: item[1]["freq"],
+        reverse=True
+    )
+    # Reduzimos aos top_n
+    sorted_agg = sorted_agg[:top_n]
 
-    # Step 3: Extract the top N most common valid solutions
-    most_common_valid_solutions = solution_counts.most_common(top_n)
+    # Montamos a lista final no formato que você quer exibir/devolver:
+    # (edges_solution, freq, bitstrings)
+    most_common_valid_solutions = [
+        (edges_tuple, data["freq"], data["bitstrings"])
+        for edges_tuple, data in sorted_agg
+    ]
 
-    # Step 4: Plot the histogram
+    # -------------------------------------------------------------------------
+    # 3) Plotar histograma
+    # -------------------------------------------------------------------------
     labels = [f"Solution {i+1}" for i in range(len(most_common_valid_solutions))]
-    frequencies = [count for _, count in most_common_valid_solutions]
+    frequencies = [item[1] for item in most_common_valid_solutions]
 
     plt.figure(figsize=(10, 6))
     plt.bar(labels, frequencies, color="skyblue")
@@ -174,13 +277,21 @@ def sample_and_plot_histogram(samples, adj_matrix, N, Delta, interpret_solution_
     plt.xlabel("Solutions")
     plt.ylabel("Frequency")
     plt.tight_layout()
-    # plt.show()
+    # plt.show()  # descomente se quiser exibir diretamente
 
-    # Step 5: Print the details of the most common solutions
+    # -------------------------------------------------------------------------
+    # 4) Imprimir detalhes das top soluções, inclusive bitstrings
+    # -------------------------------------------------------------------------
     print("\nTop Valid MST Solutions:")
-    for i, (solution, frequency) in enumerate(most_common_valid_solutions, start=1):
-        cost = sum(adj_matrix[u][v] for u, v, _ in solution)
-        print(f"Solution {i}: {solution}\nFrequency: {frequency}\nTotal Cost: {cost:.2f}\n")
+    for i, (solution, freq, bitstring_list) in enumerate(most_common_valid_solutions, start=1):
+        cost = sum(adj_matrix[u][v] for (u, v, _) in solution)
+        print(f"Solution {i}: {solution}")
+        print(f"Frequency (scaled): {freq:.0f}")
+        print(f"Total Cost: {cost:.2f}")
+        print("Bitstrings that produced this solution:")
+        for bs in bitstring_list:
+            print("  ", bs)
+        print("-"*50)
 
     return most_common_valid_solutions
 

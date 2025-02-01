@@ -11,11 +11,11 @@ def main():
     # Initial configurations
     config = Config()
 
-    # Example usage:
+    # Example usage
     N = 4
     weight_range = (10, 100)
     seed = 51 #78
-    max_degree = 2 
+    max_degree = 2
 
     # Instantiate and create the graph
     graph = Graph(N, weight_range, seed)
@@ -69,7 +69,7 @@ def main():
     # bf_solution, bf_cost = qubo_problem.brute_force_solution()    
 
     optimizer = COBYLA()
-    p = 1  # QAOA circuit depth
+    p = 2  # QAOA circuit depth
 
     optimal_params = qubo_problem.solve_problem(optimizer, p)
     samples = qubo_problem.qubo_sample(optimal_params)
