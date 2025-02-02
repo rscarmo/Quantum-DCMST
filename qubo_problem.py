@@ -86,7 +86,7 @@ class DCMST_QUBO:
         self.qaoa_circuit = None
 
         self.max_degree = self.degree_constraints.get(self.n - 1, self.n - 1)   
-        #I need to sum 1, to not over use qubits. This is the correct way to do it
+        #I need to sum 1, to not over use qubits in the way I coded the formulation.
         self.binary_bits = int(np.ceil(np.log2(self.max_degree + 1))) # binary_bits is the k
         # Define the penalty coefficient
         num_vertices = self.n
