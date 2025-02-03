@@ -192,7 +192,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 
 def sample_and_plot_histogram(samples, adj_matrix, N, Delta, interpret_solution_fn,
-                              top_n=30, var_names=None, v0=None):
+                              top_n=30, var_names=None, v0=None, VQE=False):
     """
     Interpret QUBO samples, validate solutions, and plot a histogram of the most sampled valid bitstrings.
 
@@ -237,7 +237,11 @@ def sample_and_plot_histogram(samples, adj_matrix, N, Delta, interpret_solution_
             # 1.3) Acumule na nossa estrutura
             # Frequência multiplicada se você quiser "ampliar" a escala.
             # Usando frequency*10000 como no seu exemplo:
-            freq_scaled = frequency * 10000
+            if not VQE:
+                freq_scaled = frequency * 10000
+            else:
+                freq_scaled = frequency * 1000
+
             aggregated_solutions[edges_tuple]["freq"] += freq_scaled
             aggregated_solutions[edges_tuple]["bitstrings"].append(bitstring)
 

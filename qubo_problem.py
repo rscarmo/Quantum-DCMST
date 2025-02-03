@@ -578,7 +578,7 @@ class DCMST_QUBO:
         group_e_uv = []
         self.groups_e_uv = []
         group_z_i = []
-        self.groups_z_i = []
+        self.group_z_i = []
         self.group_x = []
 
         # (e_uv = 1 and e_vu = 0) or (e_uv = 0 and e_vu = 1). So, the state |11> is forbidden
@@ -601,6 +601,8 @@ class DCMST_QUBO:
                     group_e_uv = []
             elif "x" in variable.name:
                 self.group_x.append(idx)
+            elif "z" in variable.name:
+                self.group_z_i.append(idx)
 
             idx += 1
 
@@ -617,9 +619,8 @@ class DCMST_QUBO:
         for id in self.group_e_v0:
             init_qc.h(id)
 
-        for ids in self.groups_z_i:
-            for id in ids:
-                init_qc.h(id)
+        for id in self.group_z_i:
+            init_qc.h(id)
 
         # init_qc.draw(output="mpl", style="clifford")
         init_qc.draw(output="mpl").savefig("init_qc.png")
@@ -753,7 +754,7 @@ class DCMST_QUBO:
             mixer_circuit.rx(-2 * beta, ids)
 
         # For the z_vi
-        for ids in self.groups_z_i:
+        for ids in self.group_z_i:
             mixer_circuit.rx(-2 * beta, ids)
 
         return mixer_circuit
@@ -1038,6 +1039,12 @@ class DCMST_QUBO:
         def callback(params):
             print(f"Current parameters: {params}")
 
+        def callback_vqe(eval_count, params, value, meta):
+            print(f"Iteration: {eval_count}")
+            print(f"Current parameters: {params}")
+            print(f"Current energy: {value}")
+            print(f"Meta info: {meta}")
+
         # Set up QAOA with the callback
 
         np.random.seed(self.seed)
@@ -1107,7 +1114,7 @@ class DCMST_QUBO:
 
             ansatz = TwoLocal(
                 len(self.qubo.variables),
-                rotation_blocks="ry",
+                rotation_blocks=['rx','rz'],
                 entanglement_blocks="cx",
                 entanglement="linear",
                 reps=p,
@@ -1119,7 +1126,7 @@ class DCMST_QUBO:
                 ansatz=ansatz,
                 optimizer=optimizer,
                 initial_point=initial_parameters,
-                callback=callback,  # if you have a callback function defined
+                callback=callback_vqe,  # if you have a callback function defined
             )
 
             start_time = time.time()
@@ -1141,10 +1148,10 @@ class DCMST_QUBO:
             bound_ansatz = ansatz.assign_parameters(optimal_params)
 
             # Sample the circuit using the sampler
-            sampled_result = sampler.run(bound_ansatz, shots=1024).result()
+            sampled_result = sampler.run(bound_ansatz, shots=1000).result()
             quasi_dist = sampled_result.quasi_dists[0]  # Assuming a single circuit
 
-            shots = 1024
+            shots = 1000
             float_counts = quasi_dist.binary_probabilities()
             counts = {
                 state: int(round(prob * shots)) for state, prob in float_counts.items()

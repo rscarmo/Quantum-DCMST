@@ -16,6 +16,7 @@ def main():
     weight_range = (10, 100)
     seed = 51 #78
     max_degree = 2
+    VQE=True
 
     # Instantiate and create the graph
     graph = Graph(N, weight_range, seed)
@@ -50,13 +51,13 @@ def main():
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, mixer='LogicalX', initial_state='OHE')
 
     # With mixer X - Standard formulation
-    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, fake_backend=False)
+    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, fake_backend=False)
 
     # With mixer X - Standard formulation + redundant conditions
     # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, redundancy=True)
 
     # With VQE 
-    # qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, VQE=True)
+    qubo_problem = DCMST_QUBO(graph.G, degree_constraints, config, VQE=VQE)
 
     qubo_problem.configure_variables()
     qubo_problem.define_objective_function()
@@ -69,10 +70,13 @@ def main():
     # bf_solution, bf_cost = qubo_problem.brute_force_solution()    
 
     optimizer = COBYLA()
-    p = 2  # QAOA circuit depth
+    p =3  # QAOA circuit depth
 
-    optimal_params = qubo_problem.solve_problem(optimizer, p)
-    samples = qubo_problem.qubo_sample(optimal_params)
+    if not VQE:
+        optimal_params = qubo_problem.solve_problem(optimizer, p)
+        samples = qubo_problem.qubo_sample(optimal_params)
+    else:
+        samples = qubo_problem.solve_problem(optimizer, p)
 
 
     # It seems to me that the best result considered by qiskit only takes into 
@@ -88,7 +92,8 @@ def main():
         Delta=max_degree,
         interpret_solution_fn=interpret_solution,
         top_n=30,
-        var_names=qubo_problem.var_names
+        var_names=qubo_problem.var_names,
+        VQE=VQE
     )    
 
     # Draw the most sampled
