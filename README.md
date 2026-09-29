@@ -29,10 +29,7 @@ In particular, Section 5.1.2 of Fowler’s thesis introduces an improved QUBO fo
 - directed edge variables $e_{u,v}$;
 - ordering variables $x_{u,v}$;
 - degree-counter variables $z_{v,i}$;
-- a penalty coefficient
-  $
-  P_I = (|V|-1)m + 1,
-  $
+- a penalty coefficient $P_I = (|V|-1)m + 1$,
   where $m$ is the maximum edge cost.
 
 The implementation in `qubo_problem.py` translates this mathematical formulation into Qiskit’s `QuadraticProgram` representation and subsequently converts it to QUBO/Ising form for variational quantum optimization.
