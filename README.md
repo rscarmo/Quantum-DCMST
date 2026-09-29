@@ -30,9 +30,9 @@ In particular, Section 5.1.2 of Fowler’s thesis introduces an improved QUBO fo
 - ordering variables $x_{u,v}$;
 - degree-counter variables $z_{v,i}$;
 - a penalty coefficient
-  $$
+  $
   P_I = (|V|-1)m + 1,
-  $$
+  $
   where $m$ is the maximum edge cost.
 
 The implementation in `qubo_problem.py` translates this mathematical formulation into Qiskit’s `QuadraticProgram` representation and subsequently converts it to QUBO/Ising form for variational quantum optimization.
@@ -146,6 +146,6 @@ For the underlying DCMST QUBO formulation, please also cite:
 
 ## License
 
-This repository is distributed under the **Apache License 2.0**. See [`LICENSE`](LICENSE).
+This repository is distributed under the **Apache License 2.0**. 
 
 The Apache-2.0 choice is compatible with the identified Qiskit code material incorporated or adapted in this repository, which is itself distributed under Apache-2.0. Third-party components remain subject to their respective licenses and attribution requirements.
