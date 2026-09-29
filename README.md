@@ -2,13 +2,6 @@
 
 Quantum implementations for the **Degree-Constrained Minimum Spanning Tree (DCMST)** problem using Qiskit, including QAOA/VQE-based experiments and alternative initialization/mixer strategies.
 
-This repository accompanies the paper:
-
-> Rafael Simões do Carmo, Marcos Cleison Silva Santana, Felipe Fernandes Fanchini, Kelton A. P. Costa, Weslley Santana Rosalem, and João Paulo Papa,  
-> **“Quantum Approaches for Degree-Constrained Minimum Spanning Tree Computation,”**  
-> *2025 International Joint Conference on Neural Networks (IJCNN)*, pp. 1–8, 2025.  
-> DOI: https://doi.org/10.1109/IJCNN64981.2025.11228458
-
 ## Overview
 
 The code implements a quantum-optimization workflow for DCMST. The DCMST-specific QUBO/Ising construction is based on the mathematical formulation introduced by Alex Fowler for the degree-constrained minimum spanning tree problem.
@@ -33,14 +26,14 @@ The problem-specific formulation implemented in this repository follows:
 
 In particular, Section 5.1.2 of Fowler’s thesis introduces an improved QUBO formulation for DCMST using:
 
-- directed edge variables \(e_{u,v}\);
-- ordering variables \(x_{u,v}\);
-- degree-counter variables \(z_{v,i}\);
+- directed edge variables $e_{u,v}$;
+- ordering variables $x_{u,v}$;
+- degree-counter variables $z_{v,i}$;
 - a penalty coefficient
-  \[
+  $$
   P_I = (|V|-1)m + 1,
-  \]
-  where \(m\) is the maximum edge cost.
+  $$
+  where $m$ is the maximum edge cost.
 
 The implementation in `qubo_problem.py` translates this mathematical formulation into Qiskit’s `QuadraticProgram` representation and subsequently converts it to QUBO/Ising form for variational quantum optimization.
 
@@ -101,9 +94,9 @@ The Qiskit documentation repository states that **code snippets in documentation
 
 The warm-start initialization and mixer construction use the standard warm-start QAOA prescription implemented and documented in Qiskit Optimization, including the relaxed solution \(c_i^*\), the rotation
 
-\[
+$$
 \theta_i = 2\arcsin\sqrt{c_i^*},
-\]
+$$
 
 and the corresponding warm-start mixer.
 
