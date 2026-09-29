@@ -1,3 +1,18 @@
+# Quantum-DCMST
+#
+# DCMST formulation based on:
+# A. Fowler, "Improved QUBO Formulations for D-Wave Quantum Computing,"
+# Master's thesis, University of Auckland, 2017, Sec. 5.1.2.
+#
+# Portions of the QAOA execution workflow and warm-start utilities are
+# adapted from Qiskit / IBM Quantum documentation and Qiskit Optimization,
+# distributed under the Apache License 2.0.
+#
+# Modifications and DCMST-specific implementation:
+# Copyright 2025 Quantum-DCMST contributors
+#
+# Licensed under the Apache License, Version 2.0.
+
 from qiskit_optimization.problems import QuadraticProgram
 from qiskit_optimization.converters import QuadraticProgramToQubo
 from qiskit_ibm_runtime import QiskitRuntimeService
