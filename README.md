@@ -143,6 +143,6 @@ For the underlying DCMST QUBO formulation, please also cite:
 
 ## License
 
-This repository is distributed under the **Apache License 2.0**. 
+This repository is distributed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file.
 
 The Apache-2.0 choice is compatible with the identified Qiskit code material incorporated or adapted in this repository, which is itself distributed under Apache-2.0. Third-party components remain subject to their respective licenses and attribution requirements.
